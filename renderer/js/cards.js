@@ -1,43 +1,15 @@
 // Floating glass cards: ephemeral tool feedback, interactive menus, risky-
 // action confirmations, and proactive nudges. Rich content lives in the panel.
 // Also owns the timer pill and the ghost "Sparky is controlling" app window.
-(() => {
+import { esc, TOOL_META, DEFAULT_META, DONE_BG, AMBER_BG } from './shared.js';
+
+// Late-bound to avoid a circular import with realtime.js.
+let injectTextFn = () => {};
+export function initCards(deps) { injectTextFn = deps.injectText; }
+
   const container = document.getElementById('cards');
   const cards = new Map(); // id -> { el, timeout }
-  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  const TOOL_META = {
-    web_search: { icon: '🔍', bg: 'linear-gradient(135deg,#4a90e2,#0071e3)' },
-    generate_image: { icon: '🎨', bg: 'linear-gradient(135deg,#a78bda,#7d5fc7)' },
-    show_mermaid: { icon: '📊', bg: 'linear-gradient(135deg,#4a90e2,#0071e3)' },
-    show_artifact: { icon: '📄', bg: 'linear-gradient(135deg,#4a90e2,#0071e3)' },
-    weather: { icon: '<svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="3.2"></circle><line x1="8" y1="0.8" x2="8" y2="2.4"></line><line x1="8" y1="13.6" x2="8" y2="15.2"></line><line x1="0.8" y1="8" x2="2.4" y2="8"></line><line x1="13.6" y1="8" x2="15.2" y2="8"></line><line x1="2.9" y1="2.9" x2="4" y2="4"></line><line x1="12" y1="12" x2="13.1" y2="13.1"></line><line x1="13.1" y1="2.9" x2="12" y2="4"></line><line x1="4" y1="12" x2="2.9" y2="13.1"></line></svg>', bg: 'linear-gradient(135deg,#f7b955,#e0762e)' },
-    open_app: { icon: '◳', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
-    computer_click: { icon: '🖱', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
-    computer_type: { icon: '⌨', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
-    computer_key: { icon: '⌨', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
-    computer_scroll: { icon: '📜', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
-    run_workflow: { icon: '⚡', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
-    read_screen: { icon: '📸', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
-    ui_inspect: { icon: '🔎', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
-    set_mode: { icon: '⌨', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
-    note_add: { icon: '📝', bg: 'linear-gradient(135deg,#f0a04a,#e07b28)' },
-    db_upsert: { icon: '💾', bg: 'linear-gradient(135deg,#4a90e2,#0071e3)' },
-    db_delete: { icon: '🗑', bg: 'linear-gradient(135deg,#e2665a,#c94c40)' },
-    calendar_create: { icon: '📅', bg: 'linear-gradient(135deg,#e2665a,#c94c40)' },
-    calendar_events: { icon: '📅', bg: 'linear-gradient(135deg,#e2665a,#c94c40)' },
-    email_draft: { icon: '✉', bg: 'linear-gradient(135deg,#4a90e2,#0071e3)' },
-    remember: { icon: '🧠', bg: 'linear-gradient(135deg,#a78bda,#7d5fc7)' },
-    recall: { icon: '🧠', bg: 'linear-gradient(135deg,#a78bda,#7d5fc7)' },
-    forget: { icon: '🧠', bg: 'linear-gradient(135deg,#a78bda,#7d5fc7)' },
-    show_menu: { icon: '📌', bg: 'linear-gradient(135deg,#a78bda,#7d5fc7)' },
-    timer_set: { icon: '⏱', bg: 'linear-gradient(135deg,#f0a04a,#e07b28)' },
-    file_search: { icon: '📁', bg: 'linear-gradient(135deg,#4a90e2,#0071e3)' },
-    plan_create: { icon: '📋', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
-  };
-  const DEFAULT_META = { icon: '⚙', bg: 'linear-gradient(135deg,#8e8e93,#6e6e73)' };
-  const DONE_BG = 'linear-gradient(135deg,#43c465,#2fa14e)';
-  const AMBER_BG = 'linear-gradient(135deg,#f0a04a,#e07b28)';
 
   function shell(id) {
     const el = document.createElement('div');
@@ -132,7 +104,7 @@
         const confirmEl = shell(id);
         confirmEl.innerHTML = head('✓', DONE_BG, `You picked: ${o.label}`, title, false);
         upsert(id, confirmEl, { autoRemoveMs: 1800 });
-        window.RT?.injectText(`I pick: "${o.label}" (from the "${title}" menu)`);
+        injectTextFn(`I pick: "${o.label}" (from the "${title}" menu)`);
       });
     });
     return id;
@@ -165,7 +137,7 @@
     el.addEventListener('click', () => remove(id));
   }
 
-  window.Cards = { startTool, finishTool, showMenu, showConfirm, resolveConfirm, showAmbient, remove };
+  export const Cards = { startTool, finishTool, showMenu, showConfirm, resolveConfirm, showAmbient, remove };
 
   // ================= timer pill =================
   const pill = document.getElementById('timer-pill');
@@ -192,7 +164,7 @@
     const t = timers[0];
     if (t) window.sparky.runTool('timer_cancel', { id: t.id });
   });
-  window.TimerPill = { render: renderTimers };
+  export const TimerPill = { render: renderTimers };
 
   // ================= ghost app window =================
   const ghost = document.getElementById('ghost-win');
@@ -215,5 +187,5 @@
     ghost.hidden = true;
     document.getElementById('stage').classList.remove('ghost-open');
   }
-  window.Ghost = { show: ghostShow, hide: () => { clearTimeout(ghostHide); ghostHideNow(); } };
-})();
+  export const Ghost = { show: ghostShow, hide: () => { clearTimeout(ghostHide); ghostHideNow(); } };
+

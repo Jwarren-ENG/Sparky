@@ -1,6 +1,7 @@
 // Wake-word listener: energy-gated recording → transcription → "hey sparky".
 // Runs only while disconnected and wakeWord setting is on.
-(() => {
+import { RT } from './realtime.js';
+
   let enabled = false;
   let running = false;
   let stream = null, ctx = null, analyser = null, recorder = null;
@@ -74,8 +75,8 @@
           console.log('wake word heard:', r.text);
           stop();
           // Mid typed-session, "Hey Sparky" unmutes the mic instead of no-op.
-          if (window.RT.isConnected() && !window.RT.isMicEnabled()) window.RT.setMicEnabled(true);
-          else window.App?.activate();
+          if (RT.isConnected() && !RT.isMicEnabled()) RT.setMicEnabled(true);
+          else RT.connect({ micEnabled: true });
         }
       } catch (e) { console.warn('wake transcribe failed', e); }
     };
@@ -86,10 +87,10 @@
     try { recorder?.state !== 'inactive' && recorder.stop(); } catch { recording = false; }
   }
 
-  window.Wake = {
-    setEnabled(v) { enabled = v; if (!v) stop(); else if (!window.RT.isConnected()) start(); },
+  export const Wake = {
+    setEnabled(v) { enabled = v; if (!v) stop(); else if (!RT.isConnected()) start(); },
     // Delay past Sparky's tail audio so the listener can't hear itself.
     onSessionEnd() { if (enabled) setTimeout(start, 1500); },
     onSessionStart() { stop(); },
   };
-})();
+

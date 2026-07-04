@@ -1,12 +1,12 @@
 // "Sparky's desk" — the right-side glass panel with Artifact / Plan / Memory /
 // Log / Notes tabs. Rich content lands here; ephemeral feedback stays in cards.
-(() => {
+import { esc } from './shared.js';
+
   const $ = (id) => document.getElementById(id);
   const stage = $('stage');
   const panel = $('panel');
   const pages = {};
   document.querySelectorAll('.ppage').forEach((p) => { pages[p.dataset.page] = p; });
-  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   let open = false;
   let activeTab = 'artifact';
@@ -199,5 +199,5 @@
       window.sparky.runTool(b.dataset.act === 'done' ? 'note_done' : 'note_delete', { id: b.dataset.id })));
   }
 
-  window.Panel = { setOpen, openTo, renderArtifact, renderPlan, renderWorkingMemory, renderLog, appendLog, renderNotes, isOpen: () => open };
-})();
+  export const Panel = { setOpen, openTo, renderArtifact, renderPlan, renderWorkingMemory, renderLog, appendLog, renderNotes, isOpen: () => open };
+

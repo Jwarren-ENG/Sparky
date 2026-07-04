@@ -1,6 +1,9 @@
 // Realtime voice session over WebRTC. Tool calls run async in the main
 // process so the conversation stays live while tools work.
-(() => {
+import { Face } from './face.js';
+import { Cards, Ghost } from './cards.js';
+import { AppState } from './state.js';
+
   let pc = null, dc = null, micStream = null;
   let connected = false;
   let activeResponse = false;
@@ -52,7 +55,7 @@
         teeth: clamp01(high * 1.4 + mid * 0.25 - low * 0.35),
       };
       for (const k of Object.keys(mouth)) mouth[k] = lerp(mouth[k], target[k], 0.36);
-      window.Face.setMouthShape(mouth);
+      Face.setMouthShape(mouth);
       requestAnimationFrame(loop);
     })();
   }
@@ -90,7 +93,7 @@
         connected = true;
         emit('connected');
         emit('status', micEnabled ? 'Listening' : 'Ready', micEnabled ? 'listening' : 'idle');
-        if (micEnabled) window.Face.setMode('listening');
+        if (micEnabled) Face.setMode('listening');
         // Greeting only for voice sessions — typed sessions answer the typed message instead.
         if (micEnabled) send({ type: 'response.create' });
       };
@@ -126,9 +129,9 @@
       // Full cleanup on any startup failure — never leave the UI stuck on "connecting".
       console.error('connect failed:', e);
       teardown('connect failed');
-      window.Face.setMood('concerned');
+      Face.setMood('concerned');
       emit('status', String(e.message || e).slice(0, 80), 'idle');
-      setTimeout(() => { window.Face.setMood('neutral'); emit('status', 'Say “Hey Sparky”', 'idle'); }, 5000);
+      setTimeout(() => { Face.setMood('neutral'); emit('status', 'Say “Hey Sparky”', 'idle'); }, 5000);
       return { ok: false, error: String(e.message || e) };
     }
   }
@@ -139,7 +142,7 @@
     try { pc?.close(); } catch {}
     micStream?.getTracks().forEach(t => t.stop());
     pc = dc = micStream = null; analyser = null;
-    window.Face.setMode('idle');
+    Face.setMode('idle');
     emit('disconnected', reason);
     emit('status', 'Say “Hey Sparky”', 'idle');
   }
@@ -148,8 +151,8 @@
     emit('status', 'Done ✨', 'idle');
     setTimeout(() => {
       if (!connected || runningTools.size) return;
-      if (micEnabled) { window.Face.setMode('listening'); emit('status', 'Listening', 'listening'); }
-      else { window.Face.setMode('idle'); emit('status', 'Ready', 'idle'); }
+      if (micEnabled) { Face.setMode('listening'); emit('status', 'Listening', 'listening'); }
+      else { Face.setMode('idle'); emit('status', 'Ready', 'idle'); }
     }, 900);
   }
 
@@ -161,27 +164,27 @@
         assistantBuf = '';
         // Thinking state starts here (not on speech_stopped) so VAD false
         // positives — a cough, a pause — don't flicker the face.
-        if (window.Face.getMode() !== 'speaking') { window.Face.setMode('thinking'); emit('status', 'Thinking…', 'thinking'); }
+        if (Face.getMode() !== 'speaking') { Face.setMode('thinking'); emit('status', 'Thinking…', 'thinking'); }
         break;
       case 'response.done':
         activeResponse = false;
-        if (runningTools.size) { emit('status', 'Working…', 'thinking'); window.Face.setMode('thinking'); }
-        else if (window.Face.getMode() !== 'speaking') { settleToListening(); }
+        if (runningTools.size) { emit('status', 'Working…', 'thinking'); Face.setMode('thinking'); }
+        else if (Face.getMode() !== 'speaking') { settleToListening(); }
         if (pendingResponseKick) { pendingResponseKick = false; send({ type: 'response.create' }); }
         break;
 
       case 'output_audio_buffer.started':
-        window.Face.setMode('speaking');
+        Face.setMode('speaking');
         emit('status', 'Speaking…', 'speaking');
         break;
       case 'output_audio_buffer.stopped':
       case 'output_audio_buffer.cleared':
-        if (runningTools.size) { window.Face.setMode('thinking'); emit('status', 'Working…', 'thinking'); }
+        if (runningTools.size) { Face.setMode('thinking'); emit('status', 'Working…', 'thinking'); }
         else settleToListening();
         break;
 
       case 'input_audio_buffer.speech_started':
-        window.Face.setMode('listening');
+        Face.setMode('listening');
         emit('status', 'Listening', 'listening');
         break;
 
@@ -236,14 +239,14 @@
     let args = {};
     try { args = JSON.parse(item.arguments || '{}'); } catch {}
     runningTools.add(name);
-    window.Face.setMode('thinking');
+    Face.setMode('thinking');
     emit('status', summarize(name, args) + '…', 'thinking');
 
-    const cardId = SKIP_CARD.has(name) ? null : window.Cards.startTool(name, summarize(name, args));
+    const cardId = SKIP_CARD.has(name) ? null : Cards.startTool(name, summarize(name, args));
 
     // Ghost "Sparky is controlling" window for computer-control tools.
     if (['open_app', 'computer_click', 'computer_type', 'computer_key', 'computer_scroll', 'run_workflow'].includes(name)) {
-      window.Ghost?.show(summarize(name, args), name === 'open_app' ? args.name : null, window.AppState?.dryRun);
+      Ghost.show(summarize(name, args), name === 'open_app' ? args.name : null, AppState.dryRun);
     }
 
     const result = await window.sparky.runTool(name, args);
@@ -261,7 +264,7 @@
         : outcome === 'dry' ? 'dry run — nothing executed'
         : outcome === 'confirm' ? 'waiting for your approval'
         : null;
-      window.Cards.finishTool(cardId, outcome, note);
+      Cards.finishTool(cardId, outcome, note);
     }
 
     send({
@@ -270,21 +273,21 @@
     });
     // Silent tools (mood, working memory) update the UI without a spoken reply.
     if (!result?.silent) kickResponse();
-    if (!runningTools.size && window.Face.getMode() === 'thinking') window.Face.setMode('listening');
+    if (!runningTools.size && Face.getMode() === 'thinking') Face.setMode('listening');
   }
 
   // System-side injections (proactive triggers, timers, panel actions).
   window.sparky.onInject(({ text, id }) => {
     // Ambient card shows regardless of session state — nudges are never invisible.
     const clean = text.replace(/^\[[^\]]*\]\s*/, '').replace(/^Proactive trigger[^:]*:\s*/i, '').replace(/^Timer fired:\s*/i, '⏱ ');
-    if (/^(Proactive trigger|Timer fired)/i.test(text)) window.Cards?.showAmbient(clean);
+    if (/^(Proactive trigger|Timer fired)/i.test(text)) Cards.showAmbient(clean);
     if (!connected) return; // no ack → main raises an OS notification too
     if (id) window.sparky.injectDelivered(id);
     send({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text }] } });
     kickResponse();
   });
 
-  window.RT = {
+  export const RT = {
     connect: (opts) => { userEnded = false; return connect(opts); },
     disconnect: () => {
       userEnded = true;
@@ -299,8 +302,8 @@
       micEnabled = !!v;
       micStream?.getAudioTracks().forEach(t => { t.enabled = micEnabled; });
       if (connected) {
-        if (micEnabled) { window.Face.setMode('listening'); emit('status', 'Listening', 'listening'); }
-        else { window.Face.setMode('idle'); emit('status', 'Ready', 'idle'); }
+        if (micEnabled) { Face.setMode('listening'); emit('status', 'Listening', 'listening'); }
+        else { Face.setMode('idle'); emit('status', 'Ready', 'idle'); }
       }
     },
     on: (ev, fn) => listeners[ev].push(fn),
@@ -322,4 +325,4 @@
       kickResponse();
     },
   };
-})();
+

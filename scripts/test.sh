@@ -4,10 +4,14 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "— syntax —"
+# renderer/js has a package.json {"type":"module"} so node --check parses ESM there
 for f in main/*.js renderer/js/*.js preload.js scripts/smoke.js; do
   node --check "$f"
 done
 echo "all files parse"
+if [ "$(grep -l "const esc =" renderer/js/*.js | wc -l | tr -d ' ')" != "1" ]; then
+  echo "FAIL: esc() must exist exactly once (shared.js)"; exit 1
+fi
 
 echo "— smoke (inside the real app) —"
 # The bundle shim always boots Sparky, so the smoke suite rides along via

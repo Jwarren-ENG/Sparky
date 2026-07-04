@@ -1,7 +1,6 @@
 // Sparky's face: DOM-based (not canvas), matching the Apple-inspired design.
 // Breathing orb, blinking eyes that track the cursor, mood-driven brows/mouth,
 // thinking-dot orbit, listening ring, and audio-driven mouth shape.
-(() => {
   const $ = (id) => document.getElementById(id);
   const browL = $('brow-l'), browR = $('brow-r');
   const eyeL = $('eye-l'), eyeR = $('eye-r');
@@ -105,12 +104,12 @@
   }
   requestAnimationFrame(tick);
 
-  window.Face = {
+  export const Face = {
     setMood: (m) => { if (MOODS[m]) state.mood = m; },
     setMode: (m) => { state.mode = m; },
     setMouthShape: (s) => { state.mouthShape = s; },
     getMode: () => state.mode,
   };
 
-  window.sparky.onMood(({ mood }) => window.Face.setMood(mood));
-})();
+  window.sparky.onMood(({ mood }) => Face.setMood(mood));
+
