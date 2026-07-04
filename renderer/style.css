@@ -32,8 +32,15 @@ body { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, s
 #wallpaper.theme-mist { background:
   radial-gradient(120% 90% at 20% 90%, #dcdfe4 0%, rgba(220,223,228,0) 60%),
   radial-gradient(140% 100% at 50% 0%, #f4f4f6 0%, #e8e9ee 55%, #dfe1e7 100%); }
-#wallpaper.theme-midnight ~ #center { color: #f0f0f5; }
-#stage.dark-text #status-text, #stage.dark-text #chips-label { color: rgba(240,240,245,0.65); }
+/* Midnight theme: every control flips to light-on-dark so icons stay visible */
+#stage.dark-text #voice-pill, #stage.dark-text #kbd-toggle, #stage.dark-text #attach-btn, #stage.dark-text #top-controls button {
+  background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); color: rgba(240,240,245,0.75);
+}
+#stage.dark-text #voice-pill:hover, #stage.dark-text #kbd-toggle:hover, #stage.dark-text #attach-btn:hover, #stage.dark-text #top-controls button:hover { background: rgba(255,255,255,0.18); }
+#stage.dark-text #pill-label { color: rgba(240,240,245,0.75); }
+#stage.dark-text #caption { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); color: rgba(240,240,245,0.85); }
+#stage.dark-text #timer-pill { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
+#stage.dark-text #timer-text { color: rgba(240,240,245,0.9); }
 
 /* ==== Center: face ==== */
 #center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; pointer-events: none; transition: transform 0.65s cubic-bezier(0.32,0.72,0.33,1); }
@@ -61,35 +68,27 @@ body { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, s
 
 /* drag strip (hidden title bar) */
 #dragzone { position: absolute; top: 0; left: 0; right: 0; height: 44px; z-index: 5; -webkit-app-region: drag; }
-#top-controls, #timer-pill, #status-pill { -webkit-app-region: no-drag; }
+#top-controls, #timer-pill { -webkit-app-region: no-drag; }
 
 /* caption: greeting bubble left of the face (per reference) */
 #caption { position: absolute; left: 44px; top: 42%; transform: translateY(-50%); z-index: 20; max-width: 240px; animation: fadeUp 0.35s ease; background: rgba(255,255,255,0.55); backdrop-filter: blur(28px) saturate(1.7); -webkit-backdrop-filter: blur(28px) saturate(1.7); border: 1px solid rgba(255,255,255,0.6); border-radius: 20px; padding: 14px 18px; font-size: 15px; line-height: 1.45; color: rgba(29,29,31,0.8); box-shadow: 0 16px 40px rgba(20,20,50,0.1); }
 #caption[hidden] { display: none; }
 #caption::before { content: "\201C"; }
 #caption::after { content: "\201D"; }
-
-/* status pill: floats top center (per reference) */
-#status-pill { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: 9px; background: rgba(255,255,255,0.55); backdrop-filter: blur(28px) saturate(1.7); -webkit-backdrop-filter: blur(28px) saturate(1.7); border: 1px solid rgba(255,255,255,0.6); border-radius: 999px; padding: 10px 18px; box-shadow: 0 12px 30px rgba(20,20,50,0.1); }
-#status-wave { display: flex; gap: 3px; align-items: center; height: 14px; opacity: 0; transition: opacity 0.4s ease; }
-#status-wave.active { opacity: 0.55; }
-#status-wave span { width: 3px; height: 12px; border-radius: 2px; background: rgba(29,29,31,0.55); animation: wave 0.9s ease-in-out infinite; }
-#status-wave span:nth-child(1) { animation-delay: 0s; }
-#status-wave span:nth-child(2) { animation-delay: 0.15s; }
-#status-wave span:nth-child(3) { animation-delay: 0.3s; }
-#status-wave span:nth-child(4) { animation-delay: 0.1s; }
-#status-text { font-size: 13.5px; font-weight: 500; letter-spacing: 0.1px; color: rgba(29,29,31,0.62); }
+/* Sparky's own streaming caption: no quotes, upright, slightly brighter */
+#caption.sparky { font-style: normal; color: rgba(29,29,31,0.9); }
+#caption.sparky::before, #caption.sparky::after { content: ""; }
 
 /* ==== Floating cards: right-side rail, never in front of the face ==== */
-#cards { position: absolute; right: 24px; top: 84px; width: 300px; display: flex; flex-direction: column; gap: 14px; z-index: 20; max-height: calc(100% - 220px); overflow-y: auto; scrollbar-width: none; transition: right 0.65s cubic-bezier(0.32,0.72,0.33,1); }
+/* gap lives on the cards (margin) so collapse can animate it away smoothly */
+#cards { position: absolute; right: 24px; top: 84px; width: 300px; display: flex; flex-direction: column; z-index: 20; max-height: calc(100% - 220px); overflow-y: auto; scrollbar-width: none; transition: right 0.65s cubic-bezier(0.32,0.72,0.33,1); }
 #stage.panel-open #cards { right: 420px; }
 #cards::-webkit-scrollbar { display: none; }
 
-.card { animation: cardIn 0.5s cubic-bezier(0.32, 0.72, 0.33, 1); transition: opacity 0.4s ease, transform 0.4s ease; opacity: 1;
+.card { animation: cardIn 0.5s cubic-bezier(0.32, 0.72, 0.33, 1); opacity: 1; margin-bottom: 14px;
   background: rgba(255,255,255,0.52); backdrop-filter: blur(36px) saturate(1.8); -webkit-backdrop-filter: blur(36px) saturate(1.8);
   border: 1px solid rgba(255,255,255,0.62); border-radius: 24px; padding: 16px 18px;
   box-shadow: 0 24px 60px rgba(20,20,50,0.16), inset 0 1px 0 rgba(255,255,255,0.7); pointer-events: auto; }
-.card.dropping { opacity: 0; transform: translateY(-12px) scale(0.98); }
 
 .card-head { display: flex; align-items: center; gap: 12px; }
 .card-icon { width: 36px; height: 36px; border-radius: 12px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 17px; color: #fff; box-shadow: 0 4px 12px rgba(20,20,50,0.14); }
@@ -153,30 +152,27 @@ body { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, s
 #voice-pill:hover { background: rgba(255,255,255,0.65); }
 #pill-wave { display: flex; gap: 3.5px; align-items: center; height: 22px; opacity: 0.25; transition: opacity 0.4s ease; }
 #pill-wave.active { opacity: 1; }
-#pill-wave span { width: 3.5px; height: 18px; border-radius: 2px; background: #0071e3; animation: wave 0.8s ease-in-out infinite; }
-#pill-wave span:nth-child(1) { animation-delay: 0s; }
-#pill-wave span:nth-child(2) { animation-delay: 0.12s; }
-#pill-wave span:nth-child(3) { animation-delay: 0.24s; }
-#pill-wave span:nth-child(4) { animation-delay: 0.36s; }
-#pill-wave span:nth-child(5) { animation-delay: 0.18s; }
-#pill-wave span:nth-child(6) { animation-delay: 0.06s; }
-#pill-label { font-size: 13.5px; font-weight: 500; color: rgba(29,29,31,0.65); }
+/* Bars sit still unless Sparky is actively listening */
+#pill-wave span { width: 3.5px; height: 18px; border-radius: 2px; background: #0071e3; transform: scaleY(0.3); }
+#pill-wave.active span { animation: wave 0.8s ease-in-out infinite; }
+#pill-wave.active span:nth-child(1) { animation-delay: 0s; }
+#pill-wave.active span:nth-child(2) { animation-delay: 0.12s; }
+#pill-wave.active span:nth-child(3) { animation-delay: 0.24s; }
+#pill-wave.active span:nth-child(4) { animation-delay: 0.36s; }
+#pill-wave.active span:nth-child(5) { animation-delay: 0.18s; }
+#pill-wave.active span:nth-child(6) { animation-delay: 0.06s; }
+#pill-label { font-size: 13.5px; font-weight: 500; color: rgba(29,29,31,0.65); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-#kbd-toggle { width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.6); cursor: pointer; background: rgba(255,255,255,0.4); backdrop-filter: blur(30px) saturate(1.7); -webkit-backdrop-filter: blur(30px) saturate(1.7); color: rgba(29,29,31,0.65); box-shadow: 0 12px 30px rgba(20,20,50,0.12); transition: background 0.25s ease; display: flex; align-items: center; justify-content: center; }
-#kbd-toggle:hover { background: rgba(255,255,255,0.6); }
-
-#chips-row { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; max-width: 820px; margin: 0 auto; }
-#chips-label { font-size: 13px; color: rgba(29,29,31,0.45); }
-#chips { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 8px; }
-.chip { border: 1px solid rgba(255,255,255,0.55); border-radius: 999px; padding: 8px 16px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 500; color: rgba(29,29,31,0.72); background: rgba(255,255,255,0.32); backdrop-filter: blur(24px) saturate(1.6); -webkit-backdrop-filter: blur(24px) saturate(1.6); transition: background 0.2s ease, transform 0.15s ease; }
-.chip:hover { background: rgba(255,255,255,0.6); transform: translateY(-1px); }
-.chip:active { transform: scale(0.97); }
+#kbd-toggle, #attach-btn { width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.6); cursor: pointer; background: rgba(255,255,255,0.4); backdrop-filter: blur(30px) saturate(1.7); -webkit-backdrop-filter: blur(30px) saturate(1.7); color: rgba(29,29,31,0.65); box-shadow: 0 12px 30px rgba(20,20,50,0.12); transition: background 0.25s ease; display: flex; align-items: center; justify-content: center; }
+#kbd-toggle:hover, #attach-btn:hover { background: rgba(255,255,255,0.6); }
 
 /* ==== Top-right controls ==== */
 #top-controls { position: absolute; top: 22px; right: 22px; z-index: 40; display: flex; gap: 10px; }
 #top-controls button { width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.5); cursor: pointer; background: rgba(255,255,255,0.3); backdrop-filter: blur(24px) saturate(1.6); -webkit-backdrop-filter: blur(24px) saturate(1.6); font-size: 17px; color: rgba(29,29,31,0.6); transition: background 0.25s ease; display: flex; align-items: center; justify-content: center; }
 #top-controls button:hover { background: rgba(255,255,255,0.55); }
 #settings-btn.computer-mode { box-shadow: 0 0 0 2px rgba(0,113,227,0.55); }
+#panel-btn { position: relative; }
+#panel-btn.has-badge::after { content: ""; position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: #0071e3; box-shadow: 0 0 6px rgba(0,113,227,0.6); }
 
 /* ==== Timer pill (clears the native traffic lights) ==== */
 #timer-pill { position: absolute; top: 14px; left: 92px; z-index: 40; display: flex; align-items: center; gap: 10px; animation: fadeUp 0.35s ease; background: rgba(255,255,255,0.5); backdrop-filter: blur(30px) saturate(1.7); -webkit-backdrop-filter: blur(30px) saturate(1.7); border: 1px solid rgba(255,255,255,0.6); border-radius: 999px; padding: 9px 10px 9px 16px; box-shadow: 0 12px 30px rgba(20,20,50,0.12); color: #e0762e; }
@@ -211,7 +207,7 @@ body { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, s
 #panel-close, #panel-expand { width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer; background: rgba(29,29,31,0.07); color: rgba(29,29,31,0.6); font-size: 15px; display: flex; align-items: center; justify-content: center; }
 
 /* ==== Mini bubble (computer mode) ==== */
-#stage.mini #bottom-bar, #stage.mini #cards, #stage.mini #panel, #stage.mini #status-pill,
+#stage.mini #bottom-bar, #stage.mini #cards, #stage.mini #panel,
 #stage.mini #caption, #stage.mini #top-controls, #stage.mini #timer-pill, #stage.mini #ghost-win { display: none !important; }
 #stage.mini #center { transform: none !important; }
 #stage.mini #face-wrap { transform: scale(0.58); animation: none; }
@@ -310,3 +306,13 @@ body { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, s
 .settings-field { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(0,0,0,0.06); }
 .settings-field span { font-size: 12.5px; color: rgba(29,29,31,0.55); }
 .settings-field input { background: rgba(0,0,0,0.05); border: none; border-radius: 8px; padding: 8px 10px; font-family: inherit; font-size: 13px; color: #1d1d1f; }
+.settings-danger { margin-top: 12px; width: 100%; padding: 9px; border: none; border-radius: 10px; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #c94c40; background: rgba(201,76,64,0.09); transition: background 0.2s ease; }
+.settings-danger:hover { background: rgba(201,76,64,0.16); }
+
+/* Respect Reduce Motion: kill ambient/looping animation, keep instant state changes */
+@media (prefers-reduced-motion: reduce) {
+  #face-wrap, #wallpaper, #ring, #orb { animation: none !important; }
+  #pill-wave.active span { animation: none !important; transform: scaleY(0.8); }
+  .card, #panel, #typing-row, #settings-sheet, #ghost-win, #timer-pill, #caption { animation: none !important; }
+  * { transition-duration: 0.01ms !important; }
+}

@@ -4,11 +4,22 @@ const { embed, cosine } = require('./openai');
 const { nowISO, uid } = require('./util');
 
 async function remember(text, type = 'fact', tags = []) {
-  // Dedup: exact-ish match updates instead of duplicating.
-  const existing = memory.data.items.find(i => i.text.toLowerCase() === text.toLowerCase());
-  if (existing) { existing.updated = nowISO(); memory.save(); return existing; }
+  // Exact match → touch timestamp.
+  const exact = memory.data.items.find(i => i.text.toLowerCase() === text.toLowerCase());
+  if (exact) { exact.updated = nowISO(); memory.save(); return { id: exact.id, text: exact.text, updated: true }; }
   let embedding = null;
   try { embedding = await embed(text); } catch { /* recall falls back to keyword search */ }
+  // Semantic dedupe: "likes short answers" shouldn't accrete next to
+  // "prefers brief replies" — update the near-duplicate instead.
+  if (embedding) {
+    for (const i of memory.data.items) {
+      if (i.embedding && cosine(embedding, i.embedding) > 0.92) {
+        i.text = text; i.embedding = embedding; i.type = type; i.updated = nowISO();
+        memory.save();
+        return { id: i.id, text, updated: true, note: 'merged with a near-duplicate memory' };
+      }
+    }
+  }
   const item = { id: uid('m_'), text, type, tags, embedding, created: nowISO() };
   memory.data.items.push(item);
   memory.save();
@@ -50,10 +61,17 @@ function listAll() {
 }
 
 // Compact summary injected into session instructions at startup.
-function summary(maxItems = 30) {
-  const items = memory.data.items.slice(-maxItems);
+// Relevance over recency: always-on identity/preference facts only — the
+// model calls recall() for everything else mid-conversation.
+const IDENTITY_RE = /\bname\b|prefers?|likes?|dislikes?|works (as|at|on)|lives in|is from|birthday|allerg/i;
+function summary(maxLines = 12) {
+  const items = memory.data.items;
   if (!items.length) return '(no long-term memories yet)';
-  return items.map(i => `- [${i.type}] ${i.text}`).join('\n');
+  const prefs = items.filter(i => i.type === 'preference');
+  const identity = items.filter(i => i.type !== 'preference' && i.type !== 'episode' && IDENTITY_RE.test(i.text));
+  let pick = [...prefs, ...identity].slice(-maxLines);
+  if (!pick.length) pick = items.filter(i => i.type !== 'episode').slice(-5);
+  return pick.map(i => `- [${i.type}] ${i.text}`).join('\n');
 }
 
 module.exports = { remember, recall, forget, listAll, summary };

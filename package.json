@@ -5,6 +5,7 @@
   "main": "main/main.js",
   "scripts": {
     "start": "electron .",
+    "test": "bash scripts/test.sh",
     "shim": "bash scripts/apply-shim.sh",
     "postinstall": "bash scripts/apply-shim.sh || true"
   },

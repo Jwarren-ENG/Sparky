@@ -5,14 +5,13 @@
   const container = document.getElementById('cards');
   const cards = new Map(); // id -> { el, timeout }
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  if (window.mermaid) window.mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
 
   const TOOL_META = {
     web_search: { icon: '🔍', bg: 'linear-gradient(135deg,#4a90e2,#0071e3)' },
     generate_image: { icon: '🎨', bg: 'linear-gradient(135deg,#a78bda,#7d5fc7)' },
     show_mermaid: { icon: '📊', bg: 'linear-gradient(135deg,#4a90e2,#0071e3)' },
     show_artifact: { icon: '📄', bg: 'linear-gradient(135deg,#4a90e2,#0071e3)' },
-    weather: { icon: '☀️', bg: 'linear-gradient(135deg,#4ec1e0,#2a9fc2)' },
+    weather: { icon: '<svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="3.2"></circle><line x1="8" y1="0.8" x2="8" y2="2.4"></line><line x1="8" y1="13.6" x2="8" y2="15.2"></line><line x1="0.8" y1="8" x2="2.4" y2="8"></line><line x1="13.6" y1="8" x2="15.2" y2="8"></line><line x1="2.9" y1="2.9" x2="4" y2="4"></line><line x1="12" y1="12" x2="13.1" y2="13.1"></line><line x1="13.1" y1="2.9" x2="12" y2="4"></line><line x1="4" y1="12" x2="2.9" y2="13.1"></line></svg>', bg: 'linear-gradient(135deg,#f7b955,#e0762e)' },
     open_app: { icon: '◳', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
     computer_click: { icon: '🖱', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
     computer_type: { icon: '⌨', bg: 'linear-gradient(135deg,#5b8def,#3b5fd9)' },
@@ -70,9 +69,18 @@
     const rec = cards.get(id);
     if (!rec) return;
     clearTimeout(rec.timeout);
-    rec.el.classList.add('dropping');
-    setTimeout(() => rec.el.remove(), 420);
     cards.delete(id);
+    const el = rec.el;
+    // Collapse height + margin so neighbors slide up instead of jumping.
+    const h = el.offsetHeight;
+    el.style.overflow = 'hidden';
+    el.animate(
+      [
+        { opacity: 1, height: h + 'px', marginBottom: '14px', transform: 'none' },
+        { opacity: 0, height: '0px', marginBottom: '0px', transform: 'translateY(-8px) scale(0.98)' },
+      ],
+      { duration: 380, easing: 'cubic-bezier(0.32, 0.72, 0.33, 1)', fill: 'forwards' }
+    ).onfinish = () => el.remove();
   }
 
   // ---------- ephemeral tool feedback ----------
@@ -84,13 +92,22 @@
     upsert(id, el, { autoRemoveMs: 10000 });
     return id;
   }
-  function finishTool(id) {
+  // outcome: done | error | dry | confirm | cancelled — failures must not look green.
+  const OUTCOMES = {
+    done:      { icon: '✓', bg: DONE_BG, ms: 1800 },
+    error:     { icon: '✕', bg: 'linear-gradient(135deg,#e2665a,#c94c40)', ms: 6000 },
+    dry:       { icon: '◔', bg: AMBER_BG, ms: 4000 },
+    confirm:   { icon: '⚠️', bg: AMBER_BG, ms: 4000 },
+    cancelled: { icon: '—', bg: 'linear-gradient(135deg,#9a9aa2,#6e6e73)', ms: 2500 },
+  };
+  function finishTool(id, outcome = 'done', note = null) {
     const rec = cards.get(id);
     if (!rec) return;
+    const o = OUTCOMES[outcome] || OUTCOMES.done;
     const title = rec.el.querySelector('.card-title')?.textContent || 'Done';
     const el = shell(id);
-    el.innerHTML = head('✓', DONE_BG, title, null, false);
-    upsert(id, el, { autoRemoveMs: 1800 });
+    el.innerHTML = head(o.icon, o.bg, title, note, false);
+    upsert(id, el, { autoRemoveMs: o.ms });
   }
 
   // ---------- interactive menu ----------

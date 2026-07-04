@@ -12,6 +12,21 @@
   let activeTab = 'artifact';
   const DOT_COLORS = ['#e0762e', '#4a90e2', '#7d5fc7'];
 
+  // Mermaid is 3.5MB — load it only when a diagram actually arrives.
+  let mermaidReady = null;
+  function ensureMermaid() {
+    if (window.mermaid) return Promise.resolve();
+    if (mermaidReady) return mermaidReady;
+    mermaidReady = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '../node_modules/mermaid/dist/mermaid.min.js';
+      s.onload = () => { window.mermaid.initialize({ startOnLoad: false, theme: 'neutral' }); resolve(); };
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    return mermaidReady;
+  }
+
   // ---------- open/close/tabs ----------
   function setOpen(v) {
     open = v;
@@ -71,7 +86,7 @@
       el.innerHTML = `<div class="psection">${esc(a.title)}</div><div class="prich">${a.kind === 'image' ? `<img src="file://${esc(a.path)}?t=${Date.now()}">` : '<div class="pempty"><div class="pempty-ic" style="animation: spin 1s linear infinite;">&#9696;</div><p>Generating&hellip;</p></div>'}</div>`;
     } else if (a.kind === 'mermaid') {
       el.innerHTML = `<div class="psection">${esc(a.title)}</div><div class="prich"><div class="mermaid-holder"><pre>${esc(a.code)}</pre></div></div>`;
-      if (window.mermaid) window.mermaid.render(`pm_${Date.now()}`, a.code).then(({ svg }) => {
+      ensureMermaid().then(() => window.mermaid.render(`pm_${Date.now()}`, a.code)).then(({ svg }) => {
         const h = el.querySelector('.mermaid-holder'); if (h) h.innerHTML = svg;
       }).catch(() => {});
     } else if (a.kind === 'code') {
@@ -92,7 +107,7 @@
       el.innerHTML = `<div class="psection">${esc(a.title)}</div>` + a.emails.map((e) => `<div class="pcard"><div style="font-size:13.5px;font-weight:600;color:#1d1d1f">${e.unread ? '&#128994; ' : ''}${esc(e.subject)}</div><div style="font-size:11.5px;color:rgba(60,60,67,.5);margin-top:2px">#${e.index} &middot; ${esc(e.sender)}</div></div>`).join('');
     } else if (a.kind === 'files') {
       el.innerHTML = `<div class="psection">${esc(a.title)}</div>` + a.files.map((f) => `<div class="pcard clickable" data-file="${esc(f)}"><div style="font-size:13.5px;font-weight:600;color:#0b57b4">${esc(f.split('/').pop())}</div><div style="font-size:11.5px;color:rgba(60,60,67,.5);margin-top:2px">${esc(f)}</div></div>`).join('');
-      el.querySelectorAll('[data-file]').forEach((x) => x.addEventListener('click', () => window.sparky.runTool('open_url', { url: 'file://' + x.dataset.file })));
+      el.querySelectorAll('[data-file]').forEach((x) => x.addEventListener('click', () => window.sparky.runTool('open_file', { path: x.dataset.file })));
     } else if (a.kind === 'clipboard') {
       el.innerHTML = `<div class="psection">Clipboard history</div>` + a.items.map((i) => `<div class="pcard"><div style="font-size:11px;color:rgba(60,60,67,.45)">${esc(new Date(i.time).toLocaleTimeString())}</div><div style="font-size:12.5px;color:rgba(29,29,31,.8);margin-top:3px">${esc((i.text || '').slice(0, 200))}</div></div>`).join('');
     } else if (a.kind === 'memory') {
@@ -145,16 +160,29 @@
   }
 
   // ---------- Log tab ----------
+  function logRowHTML(i) {
+    return `<div class="plog">
+      <span class="t">${esc(new Date(i.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</span>
+      <span class="txt">${i.dryRun ? '<b style="color:#e0762e">[dry]</b> ' : ''}${esc(i.summary)}</span>
+      ${i.canUndo ? `<button data-id="${i.id}">Undo</button>` : ''}
+    </div>`;
+  }
+  function wireUndo(scope) {
+    scope.querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', () => window.sparky.runTool('undo_action', { id: b.dataset.id }), { once: true }));
+  }
   function renderLog(items) {
     const el = pages.log;
     if (!items?.length) { el.innerHTML = EMPTIES.log; return; }
-    el.innerHTML = items.slice(0, 60).map((i) => `
-      <div class="plog">
-        <span class="t">${esc(new Date(i.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</span>
-        <span class="txt">${i.dryRun ? '<b style="color:#e0762e">[dry]</b> ' : ''}${esc(i.summary)}</span>
-        ${i.canUndo ? `<button data-id="${i.id}">Undo</button>` : ''}
-      </div>`).join('');
-    el.querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', () => window.sparky.runTool('undo_action', { id: b.dataset.id })));
+    el.innerHTML = items.slice(0, 60).map(logRowHTML).join('');
+    wireUndo(el);
+  }
+  // Delta path: one IPC message → one prepended row (no full re-render).
+  function appendLog(entry) {
+    const el = pages.log;
+    if (el.querySelector('.pempty')) el.innerHTML = '';
+    el.insertAdjacentHTML('afterbegin', logRowHTML(entry));
+    wireUndo(el.firstElementChild);
+    while (el.children.length > 60) el.lastElementChild.remove();
   }
 
   // ---------- Notes tab ----------
@@ -171,5 +199,5 @@
       window.sparky.runTool(b.dataset.act === 'done' ? 'note_done' : 'note_delete', { id: b.dataset.id })));
   }
 
-  window.Panel = { setOpen, openTo, renderArtifact, renderPlan, renderWorkingMemory, renderLog, renderNotes, isOpen: () => open };
+  window.Panel = { setOpen, openTo, renderArtifact, renderPlan, renderWorkingMemory, renderLog, appendLog, renderNotes, isOpen: () => open };
 })();

@@ -35,6 +35,18 @@ async function osascript(script, timeout = 30000) {
   return { ok: true, out: r.stdout };
 }
 
+// fetch with a hard timeout — no network call may wedge a tool forever.
+async function fetchT(url, opts = {}, ms = 20000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error(`request timed out after ${ms / 1000}s: ${url.split('?')[0]}`);
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+
 function nowISO() { return new Date().toISOString(); }
 function uid(prefix = '') { return prefix + Math.random().toString(36).slice(2, 10); }
 
@@ -43,4 +55,4 @@ function truncate(s, n = 4000) {
   return s.length > n ? s.slice(0, n) + `\n…[truncated ${s.length - n} chars]` : s;
 }
 
-module.exports = { ROOT, DATA_DIR, ARTIFACT_DIR, loadEnv, sh, osascript, nowISO, uid, truncate };
+module.exports = { ROOT, DATA_DIR, ARTIFACT_DIR, loadEnv, sh, osascript, fetchT, nowISO, uid, truncate };

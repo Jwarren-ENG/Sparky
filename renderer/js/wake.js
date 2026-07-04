@@ -73,7 +73,9 @@
         if (r.text && WAKE_RE.test(r.text)) {
           console.log('wake word heard:', r.text);
           stop();
-          window.App?.activate();
+          // Mid typed-session, "Hey Sparky" unmutes the mic instead of no-op.
+          if (window.RT.isConnected() && !window.RT.isMicEnabled()) window.RT.setMicEnabled(true);
+          else window.App?.activate();
         }
       } catch (e) { console.warn('wake transcribe failed', e); }
     };
@@ -86,7 +88,8 @@
 
   window.Wake = {
     setEnabled(v) { enabled = v; if (!v) stop(); else if (!window.RT.isConnected()) start(); },
-    onSessionEnd() { if (enabled) setTimeout(start, 500); },
+    // Delay past Sparky's tail audio so the listener can't hear itself.
+    onSessionEnd() { if (enabled) setTimeout(start, 1500); },
     onSessionStart() { stop(); },
   };
 })();

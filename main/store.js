@@ -10,28 +10,50 @@ class Store {
     this.data = this._load();
   }
   _load() {
-    try { return JSON.parse(fs.readFileSync(this.file, 'utf8')); }
-    catch { return structuredClone(this.fallback); }
+    try {
+      const data = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+      // Newly added settings keys get their defaults on older data files.
+      for (const k of Object.keys(this.fallback)) if (!(k in data)) data[k] = structuredClone(this.fallback[k]);
+      return data;
+    } catch { return structuredClone(this.fallback); }
   }
-  save() { fs.writeFileSync(this.file, JSON.stringify(this.data, null, 2)); }
+  save() {
+    // Debounced (rapid tool calls / clipboard copies don't hammer the disk);
+    // flushAll() runs on quit.
+    clearTimeout(this._t);
+    this._t = setTimeout(() => this.flush(), 250);
+  }
+  flush() {
+    clearTimeout(this._t);
+    // Atomic write: a crash mid-write can never corrupt the store.
+    const tmp = this.file + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2));
+    fs.renameSync(tmp, this.file);
+  }
 }
 
-const settings = new Store('settings', {
+const allStores = [];
+const track = (s) => { allStores.push(s); return s; };
+function flushAll() { for (const s of allStores) try { s.flush(); } catch {} }
+
+const settings = track(new Store('settings', {
   wakeWord: true,
   dryRun: false,
   proactivity: true,
   proactiveIntervalMin: 5,
+  clipboardHistory: true,
+  captions: true,
   quietHours: { enabled: true, start: '22:00', end: '08:00' },
   userName: '',
-});
-const memory = new Store('memory', { items: [] });
-const notes = new Store('notes', { items: [] });
-const db = new Store('database', { tables: {} });
-const actionLog = new Store('actionlog', { items: [] });
-const plan = new Store('plan', { current: null });
-const clipboardHist = new Store('clipboard', { items: [] });
-const timers = new Store('timers', { items: [] });
-const proactiveState = new Store('proactive_state', { announced: {}, snoozed: [] });
+}));
+const memory = track(new Store('memory', { items: [] }));
+const notes = track(new Store('notes', { items: [] }));
+const db = track(new Store('database', { tables: {} }));
+const actionLog = track(new Store('actionlog', { items: [] }));
+const plan = track(new Store('plan', { current: null }));
+const clipboardHist = track(new Store('clipboard', { items: [] }));
+const timers = track(new Store('timers', { items: [] }));
+const proactiveState = track(new Store('proactive_state', { announced: {}, snoozed: [] }));
 
 function inQuietHours() {
   const q = settings.data.quietHours;
@@ -44,4 +66,4 @@ function inQuietHours() {
   return s <= e ? (mins >= s && mins < e) : (mins >= s || mins < e);
 }
 
-module.exports = { settings, memory, notes, db, actionLog, plan, clipboardHist, timers, proactiveState, inQuietHours };
+module.exports = { settings, memory, notes, db, actionLog, plan, clipboardHist, timers, proactiveState, inQuietHours, flushAll };

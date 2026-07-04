@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, screen, clipboard, systemPreferences, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, screen, clipboard, systemPreferences, Notification, dialog, safeStorage } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const { loadEnv, nowISO, uid } = require('./util');
 loadEnv();
@@ -57,30 +58,59 @@ function createWindow() {
     injectOrNotify(`Proactive trigger — mention this to the user naturally and briefly: ${text}`, text);
   });
 
-  // Clipboard history poller.
+  // Clipboard history poller — privacy-first:
+  //  - respects the clipboardHistory setting
+  //  - skips concealed pasteboard content (password managers mark it)
+  //  - skips anything that looks like a secret/token
+  //  - encrypts at rest via the macOS Keychain (safeStorage)
+  const SECRET_RE = /(sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[a-z]-|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY)/;
+  const looksSecret = (t) => SECRET_RE.test(t) || /^\S{40,}$/.test(t.trim());
   let lastClip = clipboard.readText();
   setInterval(() => {
     try {
+      if (store.settings.data.clipboardHistory === false) return;
+      if (clipboard.has('org.nspasteboard.ConcealedType')) return;
       const t = clipboard.readText();
-      if (t && t !== lastClip && t.length < 20000) {
-        lastClip = t;
-        store.clipboardHist.data.items.unshift({ id: uid('cb_'), text: t, time: nowISO() });
-        store.clipboardHist.data.items = store.clipboardHist.data.items.slice(0, 50);
-        store.clipboardHist.save();
-      }
+      if (!t || t === lastClip || t.length >= 20000) return;
+      lastClip = t;
+      if (looksSecret(t)) return;
+      const item = { id: uid('cb_'), time: nowISO() };
+      if (safeStorage.isEncryptionAvailable()) item.enc = safeStorage.encryptString(t).toString('base64');
+      else item.text = t;
+      store.clipboardHist.data.items.unshift(item);
+      store.clipboardHist.data.items = store.clipboardHist.data.items.slice(0, 50);
+      store.clipboardHist.save();
     } catch {}
   }, 2000);
 }
 
+// Delivery guarantee: renderer acks only when a live session consumed the
+// inject. No ack within 600ms → OS notification, regardless of visibility.
+let injectSeq = 0;
+const pendingInjects = new Set();
 function injectOrNotify(sessionText, notifText) {
-  if (win && !win.isDestroyed()) {
-    win.webContents.send('sparky:inject', { text: sessionText });
-  }
-  // Also raise an OS notification if window is hidden (renderer ignores inject when disconnected).
-  if (!win?.isVisible() && Notification.isSupported()) {
-    new Notification({ title: 'Sparky', body: notifText }).show();
-  }
+  const id = ++injectSeq;
+  pendingInjects.add(id);
+  if (win && !win.isDestroyed()) win.webContents.send('sparky:inject', { text: sessionText, id });
+  setTimeout(() => {
+    if (!pendingInjects.delete(id)) return; // acked — session spoke it
+    if (Notification.isSupported()) new Notification({ title: 'Sparky', body: notifText }).show();
+  }, 600);
 }
+ipcMain.on('inject:delivered', (_e, { id }) => pendingInjects.delete(id));
+
+// Episodic memory: each substantial session gets a 2-line summary so
+// "what did we do yesterday?" has something to recall.
+const mem = require('./memory');
+ipcMain.on('session:ended', async (_e, { lines }) => {
+  try {
+    if (!Array.isArray(lines) || lines.length < 4) return;
+    const text = await oa.utility(
+      `Summarize this voice-assistant session in 1-2 short third-person lines (what the user wanted, what got done). No preamble.\n\n${lines.join('\n').slice(0, 6000)}`
+    );
+    if (text?.trim()) await mem.remember(`[${new Date().toLocaleDateString()}] ${text.trim().slice(0, 300)}`, 'episode');
+  } catch (e) { console.log('[episode] skipped:', String(e.message || e).slice(0, 120)); }
+});
 
 // ---------- IPC ----------
 ipcMain.handle('session:secret', async () => {
@@ -160,13 +190,54 @@ ipcMain.handle('wm:correct', (_e, { beliefs }) => {
   return { ok: true };
 });
 
-ipcMain.handle('confirm:resolve', (_e, { id, approved }) => {
-  win?.webContents.send('sparky:inject', { text: `[confirmation ${approved ? 'APPROVED' : 'DECLINED'} via panel button] Call confirm_action with id "${id}" and approved=${approved}.` });
-  return { ok: true };
+// Approval buttons execute the pending action directly — no dependency on the
+// model being connected or responsive. The model is told afterward so it can
+// narrate the outcome (and knows not to call confirm_action again).
+ipcMain.handle('confirm:resolve', async (_e, { id, approved }) => {
+  const result = await tools.execute('confirm_action', { id, approved });
+  win?.webContents.send('sparky:inject', {
+    text: `[confirmation ${approved ? 'APPROVED' : 'DECLINED'} via button — the action has ALREADY been ${approved ? 'executed' : 'cancelled'}; do NOT call confirm_action] Result: ${JSON.stringify(result).slice(0, 400)}. Tell the user the outcome in one short sentence.`,
+  });
+  return result;
 });
 
 ipcMain.handle('window:hide', () => win?.hide());
 ipcMain.handle('window:fullscreen', () => { if (win) win.setFullScreen(!win.isFullScreen()); });
+ipcMain.handle('clipboard:clear', () => {
+  store.clipboardHist.data.items = [];
+  store.clipboardHist.save();
+  return { ok: true };
+});
+
+// File/image sharing: native picker → images as data URLs (vision input),
+// small text files inline, everything else by path.
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+const TEXT_EXT = new Set(['.txt', '.md', '.json', '.csv', '.log', '.js', '.ts', '.py', '.html', '.css', '.sh', '.yaml', '.yml', '.xml', '.toml', '.swift', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h']);
+ipcMain.handle('file:pick', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'All files', extensions: ['*'] }],
+  });
+  if (r.canceled) return { files: [] };
+  const files = r.filePaths.slice(0, 5).map((p) => {
+    const name = path.basename(p);
+    const ext = path.extname(p).toLowerCase();
+    let size = 0;
+    try { size = fs.statSync(p).size; } catch {}
+    if (IMAGE_EXT.has(ext)) {
+      if (size > 8 * 1024 * 1024) return { path: p, name, kind: 'other', size, note: 'image too large to view (>8MB)' };
+      const mime = ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+      return { path: p, name, kind: 'image', size, dataUrl: `data:${mime};base64,${fs.readFileSync(p).toString('base64')}` };
+    }
+    if (TEXT_EXT.has(ext) && size < 512 * 1024) {
+      let text = '';
+      try { text = fs.readFileSync(p, 'utf8').slice(0, 20000); } catch {}
+      return { path: p, name, kind: 'text', size, text };
+    }
+    return { path: p, name, kind: 'other', size };
+  });
+  return { files };
+});
 
 // Computer mode: shrink to a corner bubble on the display the cursor is on,
 // always on top, so Sparky stays visible while it drives the Mac (rileyjarvis-style).
@@ -226,6 +297,6 @@ app.whenReady().then(async () => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else { win?.show(); win?.focus(); } });
 });
 
-app.on('before-quit', () => { app.isQuittingForReal = true; });
+app.on('before-quit', () => { app.isQuittingForReal = true; store.flushAll(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

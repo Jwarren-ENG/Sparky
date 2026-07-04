@@ -5,6 +5,10 @@
   let connected = false;
   let activeResponse = false;
   let pendingResponseKick = false;   // response.create queued behind an active response
+  let userEnded = false;             // distinguishes ⏹ from network drops
+  let reconnectUsed = false;         // one silent reconnect per drop
+  let assistantBuf = '';             // streaming caption accumulator
+  const transcript = [];             // rolling session transcript → episodic memory
   const runningTools = new Set();
 
   const audioEl = document.getElementById('remote-audio');
@@ -60,38 +64,73 @@
     send({ type: 'response.create' });
   }
 
-  async function connect() {
+  let micEnabled = true;
+
+  async function connect(opts = {}) {
     if (connected) return { ok: true };
+    micEnabled = opts.micEnabled !== false;
     emit('status', 'connecting…', 'thinking');
-    const sec = await window.sparky.getSecret();
-    if (!sec.ok) { emit('status', 'session error — see console', 'idle'); console.error('client_secret error:', sec.error); return sec; }
+    try {
+      const sec = await window.sparky.getSecret();
+      if (!sec.ok) throw new Error('session error: ' + (sec.error || 'could not create session'));
 
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-    pc = new RTCPeerConnection();
-    micStream.getTracks().forEach(t => pc.addTrack(t, micStream));
-    pc.ontrack = (e) => { audioEl.srcObject = e.streams[0]; attachAnalyser(e.streams[0]); };
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      } catch (e) {
+        throw new Error('microphone unavailable — check System Settings → Privacy → Microphone');
+      }
+      micStream.getTracks().forEach(t => { t.enabled = micEnabled; });
+      pc = new RTCPeerConnection();
+      micStream.getTracks().forEach(t => pc.addTrack(t, micStream));
+      pc.ontrack = (e) => { audioEl.srcObject = e.streams[0]; attachAnalyser(e.streams[0]); };
 
-    dc = pc.createDataChannel('oai-events');
-    dc.onmessage = (e) => handleEvent(JSON.parse(e.data));
-    dc.onopen = () => {
-      connected = true;
-      emit('connected');
-      emit('status', 'listening', 'listening');
-      // Opening greeting.
-      send({ type: 'response.create', instructions: undefined });
-    };
-    dc.onclose = () => teardown('channel closed');
+      dc = pc.createDataChannel('oai-events');
+      dc.onmessage = (e) => handleEvent(JSON.parse(e.data));
+      dc.onopen = () => {
+        connected = true;
+        emit('connected');
+        emit('status', micEnabled ? 'Listening' : 'Ready', micEnabled ? 'listening' : 'idle');
+        if (micEnabled) window.Face.setMode('listening');
+        // Greeting only for voice sessions — typed sessions answer the typed message instead.
+        if (micEnabled) send({ type: 'response.create' });
+      };
+      dc.onclose = () => {
+        const wasLive = connected;
+        const mic = micEnabled;
+        teardown('channel closed');
+        // Unexpected drop mid-session → one silent reconnect attempt.
+        if (wasLive && !userEnded && !reconnectUsed) {
+          reconnectUsed = true;
+          emit('status', 'Reconnecting…', 'thinking');
+          setTimeout(async () => {
+            const r = await connect({ micEnabled: mic });
+            if (r.ok) send({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text: '[session resumed after a brief disconnect — continue naturally, no need to mention it]' }] } });
+          }, 800);
+        }
+      };
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    const resp = await fetch(`https://api.openai.com/v1/realtime/calls?model=${encodeURIComponent(sec.model)}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${sec.secret}`, 'Content-Type': 'application/sdp' },
-      body: offer.sdp,
-    });
-    if (!resp.ok) { const t = await resp.text(); console.error('SDP exchange failed:', t); teardown('connect failed'); return { ok: false, error: t }; }
-    await pc.setRemoteDescription({ type: 'answer', sdp: await resp.text() });
-    return { ok: true };
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const resp = await fetch(`https://api.openai.com/v1/realtime/calls?model=${encodeURIComponent(sec.model)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sec.secret}`, 'Content-Type': 'application/sdp' },
+        body: offer.sdp,
+        signal: ctrl.signal,
+      }).finally(() => clearTimeout(timer));
+      if (!resp.ok) throw new Error('connection failed: ' + (await resp.text()).slice(0, 200));
+      await pc.setRemoteDescription({ type: 'answer', sdp: await resp.text() });
+      return { ok: true };
+    } catch (e) {
+      // Full cleanup on any startup failure — never leave the UI stuck on "connecting".
+      console.error('connect failed:', e);
+      teardown('connect failed');
+      window.Face.setMood('concerned');
+      emit('status', String(e.message || e).slice(0, 80), 'idle');
+      setTimeout(() => { window.Face.setMood('neutral'); emit('status', 'Say “Hey Sparky”', 'idle'); }, 5000);
+      return { ok: false, error: String(e.message || e) };
+    }
   }
 
   function teardown(reason) {
@@ -107,13 +146,22 @@
 
   function settleToListening() {
     emit('status', 'Done ✨', 'idle');
-    setTimeout(() => { if (connected && !runningTools.size) { window.Face.setMode('listening'); emit('status', 'Listening', 'listening'); } }, 900);
+    setTimeout(() => {
+      if (!connected || runningTools.size) return;
+      if (micEnabled) { window.Face.setMode('listening'); emit('status', 'Listening', 'listening'); }
+      else { window.Face.setMode('idle'); emit('status', 'Ready', 'idle'); }
+    }, 900);
   }
 
   async function handleEvent(ev) {
     switch (ev.type) {
       case 'response.created':
         activeResponse = true;
+        reconnectUsed = false; // healthy traffic resets the reconnect budget
+        assistantBuf = '';
+        // Thinking state starts here (not on speech_stopped) so VAD false
+        // positives — a cough, a pause — don't flicker the face.
+        if (window.Face.getMode() !== 'speaking') { window.Face.setMode('thinking'); emit('status', 'Thinking…', 'thinking'); }
         break;
       case 'response.done':
         activeResponse = false;
@@ -136,13 +184,23 @@
         window.Face.setMode('listening');
         emit('status', 'Listening', 'listening');
         break;
-      case 'input_audio_buffer.speech_stopped':
-        window.Face.setMode('thinking');
-        emit('status', 'Thinking…', 'thinking');
-        break;
 
       case 'conversation.item.input_audio_transcription.completed':
-        if (ev.transcript?.trim()) emit('caption', ev.transcript.trim());
+        if (ev.transcript?.trim()) {
+          emit('caption', ev.transcript.trim(), 'you');
+          transcript.push('User: ' + ev.transcript.trim());
+        }
+        break;
+      case 'response.output_audio_transcript.delta':
+      case 'response.audio_transcript.delta':
+        // Streaming caption of Sparky's own words as it speaks.
+        assistantBuf += ev.delta || '';
+        emit('caption', assistantBuf, 'sparky');
+        break;
+      case 'response.output_audio_transcript.done':
+      case 'response.audio_transcript.done':
+        if (ev.transcript?.trim()) transcript.push('Sparky: ' + ev.transcript.trim());
+        if (transcript.length > 40) transcript.splice(0, transcript.length - 40);
         break;
 
       case 'response.output_item.done':
@@ -179,7 +237,7 @@
     try { args = JSON.parse(item.arguments || '{}'); } catch {}
     runningTools.add(name);
     window.Face.setMode('thinking');
-    emit('status', 'Working…', 'thinking');
+    emit('status', summarize(name, args) + '…', 'thinking');
 
     const cardId = SKIP_CARD.has(name) ? null : window.Cards.startTool(name, summarize(name, args));
 
@@ -193,7 +251,18 @@
     runningTools.delete(name);
     if (!connected) return;
 
-    if (cardId) window.Cards.finishTool(cardId);
+    if (cardId) {
+      const outcome = result?.error ? 'error'
+        : result?.dry_run ? 'dry'
+        : result?.status === 'awaiting_confirmation' ? 'confirm'
+        : result?.cancelled ? 'cancelled'
+        : 'done';
+      const note = result?.error ? String(result.error).slice(0, 90)
+        : outcome === 'dry' ? 'dry run — nothing executed'
+        : outcome === 'confirm' ? 'waiting for your approval'
+        : null;
+      window.Cards.finishTool(cardId, outcome, note);
+    }
 
     send({
       type: 'conversation.item.create',
@@ -205,23 +274,51 @@
   }
 
   // System-side injections (proactive triggers, timers, panel actions).
-  window.sparky.onInject(({ text }) => {
-    if (!connected) return; // idle → main falls back to OS notification
-    // Surface a light ambient card for proactive nudges / timer fires.
+  window.sparky.onInject(({ text, id }) => {
+    // Ambient card shows regardless of session state — nudges are never invisible.
     const clean = text.replace(/^\[[^\]]*\]\s*/, '').replace(/^Proactive trigger[^:]*:\s*/i, '').replace(/^Timer fired:\s*/i, '⏱ ');
     if (/^(Proactive trigger|Timer fired)/i.test(text)) window.Cards?.showAmbient(clean);
+    if (!connected) return; // no ack → main raises an OS notification too
+    if (id) window.sparky.injectDelivered(id);
     send({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text }] } });
     kickResponse();
   });
 
   window.RT = {
-    connect,
-    disconnect: () => teardown('user ended session'),
+    connect: (opts) => { userEnded = false; return connect(opts); },
+    disconnect: () => {
+      userEnded = true;
+      // Hand the transcript to main for an episodic memory summary.
+      if (transcript.length >= 4) window.sparky.sessionEnded?.(transcript.slice(-30));
+      transcript.length = 0;
+      teardown('user ended session');
+    },
     isConnected: () => connected,
+    isMicEnabled: () => micEnabled,
+    setMicEnabled: (v) => {
+      micEnabled = !!v;
+      micStream?.getAudioTracks().forEach(t => { t.enabled = micEnabled; });
+      if (connected) {
+        if (micEnabled) { window.Face.setMode('listening'); emit('status', 'Listening', 'listening'); }
+        else { window.Face.setMode('idle'); emit('status', 'Ready', 'idle'); }
+      }
+    },
     on: (ev, fn) => listeners[ev].push(fn),
     injectText: (text) => {
       if (!connected) return;
       send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
+      kickResponse();
+    },
+    // Shared image → vision input for the model.
+    sendImage: (dataUrl, name) => {
+      if (!connected) return;
+      send({
+        type: 'conversation.item.create',
+        item: { type: 'message', role: 'user', content: [
+          { type: 'input_text', text: `[The user shared an image: ${name}] Look at it and respond.` },
+          { type: 'input_image', image_url: dataUrl },
+        ] },
+      });
       kickResponse();
     },
   };

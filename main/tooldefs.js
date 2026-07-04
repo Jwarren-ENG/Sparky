@@ -42,13 +42,20 @@ const TOOLS = [
   { name: 'set_mode', description: 'Switch between "display" mode (default) and "computer" mode. Computer-control tools (open_app, click, type, keys, scroll, workflows) only work in computer mode. Switch when the user asks you to control the computer; announce the switch briefly.', parameters: P({ mode: S('display | computer') }, ['mode']) },
   { name: 'open_app', description: 'Open a macOS application by name (e.g. "Safari", "Notes"). Requires computer mode.', parameters: P({ name: S('app name') }, ['name']) },
   { name: 'open_url', description: 'Open a URL in the default browser.', parameters: P({ url: S('https URL') }, ['url']) },
-  { name: 'computer_click', description: 'Click at screen coordinates. Use read_screen/ui_inspect first to find targets.', parameters: P({ x: N('screen x'), y: N('screen y'), double: B('double click') }, ['x', 'y']) },
+  { name: 'open_file', description: 'Open a local file or folder in its default application.', parameters: P({ path: S('absolute path to the file or folder') }, ['path']) },
+  { name: 'computer_click_element', description: 'Click a UI element by its title (from ui_inspect). ALWAYS prefer this over computer_click — element targeting is reliable, pixel coordinates are not.', parameters: P({ title: S('element title/name, exact or partial'), role: S('optional AX role filter, e.g. AXButton') }, ['title']) },
+  { name: 'computer_click', description: 'Click at raw screen coordinates. Fallback only — prefer computer_click_element. Use ui_inspect first to find real coordinates.', parameters: P({ x: N('screen x'), y: N('screen y'), double: B('double click') }, ['x', 'y']) },
   { name: 'computer_type', description: 'Type text into the focused control.', parameters: P({ text: S('text to type') }, ['text']) },
   { name: 'computer_key', description: 'Press a key or shortcut, e.g. "return", "tab", "cmd+s", "cmd+shift+t".', parameters: P({ combo: S('key combo') }, ['combo']) },
   { name: 'computer_scroll', description: 'Scroll the frontmost window.', parameters: P({ direction: S('up | down'), amount: N('lines, default 5') }, ['direction']) },
   { name: 'read_screen', description: 'Take a screenshot and answer a question about what is on screen (also good for "what is this error?").', parameters: P({ question: S('what to look for / answer') }, ['question']) },
-  { name: 'ui_inspect', description: 'List UI elements (buttons, fields, their positions) of the frontmost window via accessibility.', parameters: P({}) },
+  { name: 'ui_inspect', description: 'List interactive UI elements of the frontmost window as structured data (role, title, position, size). Call this before clicking anything, then use computer_click_element.', parameters: P({}) },
   { name: 'run_workflow', description: 'Run a short sequence of computer-control steps (open_app/click/type/key/scroll) as one workflow. Respects dry-run mode.', parameters: P({ description: S('what this workflow does'), steps: { type: 'array', items: { type: 'object' }, description: 'each: {tool, args}' } }, ['description', 'steps']) },
+
+  // ---- browser (Safari/Chrome via AppleScript — no computer mode needed for reading) ----
+  { name: 'browser_tabs', description: 'List open tabs (title + URL) in Safari and Chrome.', parameters: P({}) },
+  { name: 'browser_read_page', description: 'Read the text content of the frontmost browser tab. Use for "summarize this page", "what am I reading".', parameters: P({ browser: S('safari | chrome — optional, defaults to whichever is running') }) },
+  { name: 'browser_open_tab', description: 'Open a URL in a new browser tab.', parameters: P({ url: S('https URL'), browser: S('safari | chrome — optional') }, ['url']) },
 
   // ---- confirmation & safety ----
   { name: 'confirm_action', description: 'Execute (or cancel) a pending risky action after the user explicitly said yes or no out loud.', parameters: P({ id: S('pending action id'), approved: B('true only if the user clearly approved') }, ['id', 'approved']) },

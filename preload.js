@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('sparky', {
   confirmResolve: (id, approved) => ipcRenderer.invoke('confirm:resolve', { id, approved }),
   hideWindow: () => ipcRenderer.invoke('window:hide'),
   toggleFullscreen: () => ipcRenderer.invoke('window:fullscreen'),
+  pickFiles: () => ipcRenderer.invoke('file:pick'),
+  injectDelivered: (id) => ipcRenderer.send('inject:delivered', { id }),
+  sessionEnded: (lines) => ipcRenderer.send('session:ended', { lines }),
+  clearClipboard: () => ipcRenderer.invoke('clipboard:clear'),
 
   onArtifact: on('artifact'),
   onPlan: on('plan'),
@@ -25,6 +29,7 @@ contextBridge.exposeInMainWorld('sparky', {
   onMood: on('mood'),
   onMode: on('mode'),
   onLog: on('log'),
+  onLogAppend: on('log_append'),
   onTimers: on('timers'),
   onInject: on('inject'),
   onConfirm: on('confirm'),

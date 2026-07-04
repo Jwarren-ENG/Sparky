@@ -9,7 +9,6 @@
   const dotA = $('dot-a'), dotB = $('dot-b');
   const ring = $('ring');
   const pillWave = $('pill-wave');
-  const statusWave = $('status-wave');
 
   const MOODS = {
     neutral:   { browTilt: 0,     browLift: 0,  eyeH: 1,    curve: 6 },
@@ -27,11 +26,24 @@
   let thinkAngle = 0;
 
   // Cursor tracking within the window, matching the design's onMouseMove.
+  let lastMouse = 0;
   window.addEventListener('mousemove', (e) => {
+    lastMouse = Date.now();
     const cx = window.innerWidth / 2, cy = window.innerHeight / 2 - 40;
     look.tx = Math.max(-1, Math.min(1, (e.clientX - cx) / 600));
     look.ty = Math.max(-1, Math.min(1, (e.clientY - cy) / 500));
   });
+
+  // Idle gaze: when nothing is happening, glance around occasionally —
+  // small saccades with a drift back toward center, so Sparky feels present.
+  (function saccade() {
+    if (state.mode === 'idle' && Date.now() - lastMouse > 8000) {
+      look.tx = (Math.random() - 0.5) * 1.0;
+      look.ty = (Math.random() - 0.5) * 0.7;
+      setTimeout(() => { if (Date.now() - lastMouse > 8000) { look.tx *= 0.25; look.ty *= 0.25; } }, 1200 + Math.random() * 1400);
+    }
+    setTimeout(saccade, 4000 + Math.random() * 5000);
+  })();
 
   function clamp(min, max, v) { return Math.max(min, Math.min(max, v)); }
 
@@ -85,10 +97,9 @@
       }
     }
 
-    // listening ring + waves
+    // listening ring; pill bars move while listening or speaking (two-way alive)
     ring.style.opacity = state.mode === 'listening' ? '1' : '0';
-    pillWave.classList.toggle('active', state.mode === 'listening');
-    statusWave.classList.toggle('active', state.mode === 'listening' || speaking);
+    pillWave.classList.toggle('active', state.mode === 'listening' || speaking);
 
     requestAnimationFrame(tick);
   }

@@ -1,9 +1,8 @@
-// Glue: voice pill, typing, chips, settings sheet, theme, captions/status.
+// Glue: voice pill, typing, file sharing, settings sheet, theme, captions.
 (() => {
   const $ = (id) => document.getElementById(id);
   const stage = $('stage');
   const wallpaper = $('wallpaper');
-  const statusText = $('status-text');
   const caption = $('caption');
   const pillLabelEl = $('pill-label');
   const voicePill = $('voice-pill');
@@ -24,22 +23,35 @@
   setInterval(applyTheme, 10 * 60 * 1000);
 
   // ---------- voice pill ----------
+  // Not connected → start a voice session. Connected with mic muted (typed
+  // session) → unmute. Connected and live → end the session.
   voicePill.addEventListener('click', async () => {
-    if (window.RT.isConnected()) window.RT.disconnect();
-    else await window.RT.connect();
+    if (!window.RT.isConnected()) await window.RT.connect({ micEnabled: true });
+    else if (!window.RT.isMicEnabled()) { window.RT.setMicEnabled(true); window.Wake.onSessionStart(); }
+    else window.RT.disconnect();
   });
 
+  const ariaStatus = document.createElement('div');
+  ariaStatus.setAttribute('aria-live', 'polite');
+  ariaStatus.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)';
+  document.body.appendChild(ariaStatus);
+
   window.RT.on('status', (text, mode) => {
-    statusText.textContent = text;
-    pillLabelEl.textContent = PILL_LABEL[mode] || PILL_LABEL.idle;
+    // Specific beats generic: tool summaries ("Searching the web…") show in the pill.
+    pillLabelEl.textContent = text || PILL_LABEL[mode] || PILL_LABEL.idle;
+    ariaStatus.textContent = text;
   });
-  window.RT.on('caption', (text) => {
+  window.RT.on('caption', (text, who) => {
+    if (settings.captions === false) return;
     caption.textContent = text;
+    caption.classList.toggle('sparky', who === 'sparky');
     caption.hidden = false;
     clearTimeout(captionTimer);
-    captionTimer = setTimeout(() => { caption.hidden = true; }, 6000);
+    captionTimer = setTimeout(() => { caption.hidden = true; }, who === 'sparky' ? 8000 : 6000);
   });
-  window.RT.on('connected', () => { window.Wake.onSessionStart(); });
+  // Keep the wake listener alive during mic-muted (typed) sessions so
+  // "Hey Sparky" can upgrade them to voice.
+  window.RT.on('connected', () => { if (window.RT.isMicEnabled()) window.Wake.onSessionStart(); });
   window.RT.on('disconnected', () => { window.Wake.onSessionEnd(); caption.hidden = true; });
 
   // ---------- typing ----------
@@ -53,28 +65,29 @@
     const text = textField.value.trim();
     if (!text) return;
     textField.value = '';
-    if (!window.RT.isConnected()) await window.RT.connect();
+    // Typed input: connect with the mic muted — no listening mode, just a reply.
+    if (!window.RT.isConnected()) await window.RT.connect({ micEnabled: false });
     window.RT.injectText(text);
   }
   $('text-send').addEventListener('click', submitText);
   textField.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitText(); });
 
-  // ---------- chips ----------
-  const CHIPS = [
-    { label: 'Book a flight', prompt: 'Help me find a flight — ask me where and when, then search for options.' },
-    { label: 'Open an app', prompt: 'Open an app for me — switch to computer mode and ask which one.' },
-    { label: 'Send a file', prompt: 'Help me send a file to someone — ask what file and who.' },
-    { label: 'Search the web', prompt: 'Search the web for the latest AI news.' },
-    { label: 'Check the weather', prompt: "What's the weather like right now?" },
-    { label: 'Set a timer', prompt: 'Set a timer for 5 minutes.' },
-    { label: 'Plan a trip', prompt: 'Plan a weekend trip to Austin — make a checklist plan and work through it.' },
-  ];
-  const chipsEl = $('chips');
-  chipsEl.innerHTML = CHIPS.map((c, i) => `<button class="chip" data-i="${i}">${c.label}</button>`).join('');
-  chipsEl.querySelectorAll('.chip').forEach((btn) => btn.addEventListener('click', async () => {
-    if (!window.RT.isConnected()) await window.RT.connect();
-    window.RT.injectText(CHIPS[+btn.dataset.i].prompt);
-  }));
+  // ---------- file / image sharing ----------
+  $('attach-btn').addEventListener('click', async () => {
+    const { files } = await window.sparky.pickFiles();
+    if (!files.length) return;
+    if (!window.RT.isConnected()) await window.RT.connect({ micEnabled: false });
+    for (const f of files) {
+      if (f.kind === 'image' && f.dataUrl) {
+        window.Panel.renderArtifact({ kind: 'image', title: f.name, path: f.path });
+        window.RT.sendImage(f.dataUrl, f.name);
+      } else if (f.kind === 'text') {
+        window.RT.injectText(`[The user shared a file: ${f.name} (${f.path})]\n\n${f.text}`);
+      } else {
+        window.RT.injectText(`[The user shared a file: ${f.name} at ${f.path}${f.note ? ` — ${f.note}` : ''}] Use your tools if you need to work with it.`);
+      }
+    }
+  });
 
   // ---------- settings ----------
   const overlay = $('settings-overlay');
@@ -84,6 +97,8 @@
     ['wakeWord', 'Wake word “Hey Sparky”'],
     ['dryRun', 'Dry-run mode'],
     ['proactivity', 'Proactive nudges'],
+    ['clipboardHistory', 'Clipboard history'],
+    ['captions', 'Live captions'],
     ['quietHoursEnabled', 'Quiet hours'],
   ];
   function renderSettingsRows() {
@@ -122,6 +137,11 @@
     overlay.hidden = true;
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.hidden = true; });
+  $('s-clear-clipboard').addEventListener('click', async (e) => {
+    await window.sparky.clearClipboard();
+    e.target.textContent = 'Cleared ✓';
+    setTimeout(() => { e.target.textContent = 'Clear clipboard history'; }, 1500);
+  });
   sheet.addEventListener('click', (e) => e.stopPropagation());
   $('s-qstart').addEventListener('change', persistQuietTimes);
   $('s-qend').addEventListener('change', persistQuietTimes);
@@ -141,15 +161,21 @@
   $('fullscreen-btn').addEventListener('click', () => window.sparky.toggleFullscreen());
 
   // ---------- artifacts / plan / memory / log / notes → panel; menus → cards ----------
+  // Panel auto-opens only for content the user must READ; notes/log update
+  // silently with a badge dot on the panel button.
+  const panelBtn = $('panel-btn');
+  const badge = () => { if (!window.Panel.isOpen()) panelBtn.classList.add('has-badge'); };
+  panelBtn.addEventListener('click', () => panelBtn.classList.remove('has-badge'));
   window.sparky.onArtifact((a) => {
     if (a.kind === 'menu') window.Cards.showMenu(a.title, a.options);
-    else if (a.kind === 'notes') { window.Panel.renderNotes(a.items); window.Panel.openTo('notes'); }
+    else if (a.kind === 'notes') { window.Panel.renderNotes(a.items); badge(); }
     else if (a.kind === 'log') { window.Panel.renderLog(a.items); window.Panel.openTo('log'); }
     else window.Panel.renderArtifact(a);
   });
   window.sparky.onPlan((plan) => window.Panel.renderPlan(plan));
-  window.sparky.onWorkingMemory(({ beliefs }) => window.Panel.renderWorkingMemory(beliefs));
+  window.sparky.onWorkingMemory(({ beliefs }) => { window.Panel.renderWorkingMemory(beliefs); badge(); });
   window.sparky.onLog((items) => window.Panel.renderLog(items));
+  window.sparky.onLogAppend((entry) => { window.Panel.appendLog(entry); });
   window.sparky.onTimers((items) => window.TimerPill.render(items));
 
   // ---------- risky-action confirmation ----------
@@ -170,7 +196,7 @@
 
   window.AppState = { dryRun: false };
   window.App = {
-    activate: async () => { if (!window.RT.isConnected()) await window.RT.connect(); },
+    activate: async () => { if (!window.RT.isConnected()) await window.RT.connect({ micEnabled: true }); },
   };
 
   // Escape hides the window (design has no visible close control).

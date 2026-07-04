@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { clipboard, shell } = require('electron');
-const { sh, osascript, nowISO, uid, truncate, ARTIFACT_DIR } = require('./util');
+const { sh, osascript, fetchT, nowISO, uid, truncate, ARTIFACT_DIR } = require('./util');
 const store = require('./store');
 const mem = require('./memory');
 const oa = require('./openai');
@@ -22,13 +22,20 @@ function logAction(tool, summary, { undo = null, dryRun = false } = {}) {
   store.actionLog.data.items.unshift(entry);
   store.actionLog.data.items = store.actionLog.data.items.slice(0, 500);
   store.actionLog.save();
-  emit('log', publicLog()); // keeps the panel's Log tab fresh without opening it
+  const { _undo, ...pub } = entry;
+  emit('log_append', pub); // delta only — the panel prepends one row
   return entry;
 }
 const publicLog = () => store.actionLog.data.items.map(({ _undo, ...rest }) => rest).slice(0, 100);
 
 // ---------- confirmation gate ----------
+const CONFIRM_TTL_MS = 10 * 60 * 1000;
+function sweepPending() {
+  const now = Date.now();
+  for (const [k, v] of pending) if (now - v.created > CONFIRM_TTL_MS) pending.delete(k);
+}
 function requireConfirmation(tool, args, summary) {
+  sweepPending();
   const id = uid('c_');
   pending.set(id, { tool, args, summary, created: Date.now() });
   emit('confirm', { id, summary });
@@ -41,7 +48,7 @@ const dryRun = () => !!store.settings.data.dryRun;
 // Computer-control tools are blocked until the model switches into computer
 // mode via set_mode (extra layer on top of dry-run and confirmations).
 let computerMode = false;
-const NEEDS_COMPUTER_MODE = new Set(['open_app', 'computer_click', 'computer_type', 'computer_key', 'computer_scroll', 'run_workflow']);
+const NEEDS_COMPUTER_MODE = new Set(['open_app', 'computer_click', 'computer_click_element', 'computer_type', 'computer_key', 'computer_scroll', 'run_workflow']);
 const modeBlocked = () => ({ error: 'Computer control is disabled. Call set_mode with mode="computer" first (tell the user you are switching).' });
 
 async function hasCliclick() {
@@ -66,11 +73,11 @@ const exec = {
   // ---- knowledge & artifacts ----
   async web_search({ query, num_results = 6 }) {
     if (!process.env.EXA_API_KEY) return { error: 'EXA_API_KEY is not set. Add it to .env to enable web search (get one at exa.ai). Tell the user this briefly.' };
-    const res = await fetch('https://api.exa.ai/search', {
+    const res = await fetchT('https://api.exa.ai/search', {
       method: 'POST',
       headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, numResults: num_results, contents: { text: { maxCharacters: 800 }, highlights: true } }),
-    });
+    }, 15000);
     if (!res.ok) return { error: `Exa error ${res.status}` };
     const j = await res.json();
     const results = (j.results || []).map(r => ({ title: r.title, url: r.url, snippet: (r.highlights?.[0] || r.text || '').slice(0, 400), published: r.publishedDate }));
@@ -102,14 +109,14 @@ const exec = {
   async weather({ city }) {
     let lat, lon, place;
     if (city) {
-      const g = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1`)).json();
+      const g = await (await fetchT(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1`, {}, 10000)).json();
       if (!g.results?.length) return { error: `Could not find city "${city}"` };
       ({ latitude: lat, longitude: lon, name: place } = g.results[0]);
     } else {
-      const ip = await (await fetch('https://ipapi.co/json/')).json();
+      const ip = await (await fetchT('https://ipapi.co/json/', {}, 10000)).json();
       lat = ip.latitude; lon = ip.longitude; place = ip.city || 'your area';
     }
-    const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=3&timezone=auto&temperature_unit=fahrenheit`)).json();
+    const w = await (await fetchT(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=3&timezone=auto&temperature_unit=fahrenheit`, {}, 10000)).json();
     const out = { place, current: w.current, daily: w.daily };
     emit('artifact', { kind: 'weather', title: `Weather — ${place}`, data: out });
     return out;
@@ -242,14 +249,22 @@ const exec = {
   async open_app({ name }) {
     if (dryRun()) return dryPreview('open_app', `Would open app "${name}"`);
     const r = await sh('open', ['-a', name]);
+    if (!r.ok) return { error: r.stderr || `could not open ${name}` };
     logAction('open_app', `Opened app: ${name}`);
-    return r.ok ? { ok: true } : { error: r.stderr || `could not open ${name}` };
+    return { ok: true };
   },
   async open_url({ url }) {
-    if (!/^https?:\/\//.test(url)) return { error: 'only http(s) urls' };
+    if (!/^https?:\/\//.test(url)) return { error: 'only http(s) urls — use open_file for local paths' };
     if (dryRun()) return dryPreview('open_url', `Would open URL ${url}`);
     await shell.openExternal(url);
     logAction('open_url', `Opened URL: ${url}`);
+    return { ok: true };
+  },
+  async open_file({ path: p }) {
+    if (!p || !fs.existsSync(p)) return { error: `file not found: ${p}` };
+    const err = await shell.openPath(p);
+    if (err) return { error: err };
+    logAction('open_file', `Opened file: ${p}`);
     return { ok: true };
   },
   async computer_click({ x, y, double = false }) {
@@ -259,21 +274,24 @@ const exec = {
       logAction('computer_click', `Clicked at (${x}, ${y})${double ? ' (double)' : ''}`);
       return r.ok ? { ok: true } : { error: r.stderr };
     }
-    const r = await osascript(`tell application "System Events" to ${double ? 'click' : 'click'} at {${x}, ${y}}`);
-    if (r.ok) { logAction('computer_click', `Clicked at (${x}, ${y})`); return { ok: true }; }
+    let r = await osascript(`tell application "System Events" to click at {${x}, ${y}}`);
+    if (r.ok && double) { await new Promise(res => setTimeout(res, 120)); r = await osascript(`tell application "System Events" to click at {${x}, ${y}}`); }
+    if (r.ok) { logAction('computer_click', `Clicked at (${x}, ${y})${double ? ' (double)' : ''}`); return { ok: true }; }
     return { error: 'Clicking needs the "cliclick" utility. Ask the user to run: brew install cliclick' };
   },
   async computer_type({ text }) {
     if (dryRun()) return dryPreview('computer_type', `Would type: "${truncate(text, 100)}"`);
     const r = await osascript(`tell application "System Events" to keystroke "${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
+    if (!r.ok) return { error: r.error + ' (grant Accessibility permission in System Settings → Privacy & Security)' };
     logAction('computer_type', `Typed ${text.length} chars`);
-    return r.ok ? { ok: true } : { error: r.error + ' (grant Accessibility permission in System Settings → Privacy & Security)' };
+    return { ok: true };
   },
   async computer_key({ combo }) {
     if (dryRun()) return dryPreview('computer_key', `Would press: ${combo}`);
     const r = await pressKey(combo);
+    if (!r.ok) return { error: r.error };
     logAction('computer_key', `Pressed: ${combo}`);
-    return r.ok ? { ok: true } : { error: r.error };
+    return { ok: true };
   },
   async computer_scroll({ direction = 'down', amount = 5 }) {
     if (dryRun()) return dryPreview('computer_scroll', `Would scroll ${direction} ${amount}`);
@@ -296,41 +314,81 @@ const exec = {
     return { answer };
   },
   async ui_inspect() {
+    // Structured element frames — the model should click elements by name,
+    // not guess pixel coordinates.
     const script = `
       tell application "System Events"
         set p to first process whose frontmost is true
         set appName to name of p
-        set out to "app: " & appName & "\\n"
+        set out to "APP|" & appName & linefeed
         try
           set w to front window of p
-          set out to out & "window: " & (name of w) & "\\n"
-          repeat with el in (UI elements of w)
+          set out to out & "WIN|" & (name of w) & linefeed
+          set elems to entire contents of w
+          set maxN to count of elems
+          if maxN > 400 then set maxN to 400
+          set found to 0
+          repeat with idx from 1 to maxN
             try
-              set r to role description of el
-              set n to ""
-              try
-                set n to name of el
-              end try
-              set pos to position of el
-              set out to out & r & " | " & n & " | at " & (item 1 of pos as text) & "," & (item 2 of pos as text) & "\\n"
+              set el to item idx of elems
+              set r to role of el
+              if r is in {"AXButton", "AXTextField", "AXTextArea", "AXCheckBox", "AXPopUpButton", "AXRadioButton", "AXLink", "AXMenuButton", "AXComboBox"} then
+                set nm to ""
+                try
+                  set nm to name of el
+                end try
+                if nm is missing value then set nm to ""
+                set pos to position of el
+                set sz to size of el
+                set out to out & r & "|" & nm & "|" & (item 1 of pos) & "|" & (item 2 of pos) & "|" & (item 1 of sz) & "|" & (item 2 of sz) & linefeed
+                set found to found + 1
+                if found is greater than or equal to 40 then exit repeat
+              end if
             end try
           end repeat
         end try
         return out
       end tell`;
-    const r = await osascript(script, 15000);
+    const r = await osascript(script, 20000);
     if (!r.ok) return { error: r.error + ' (needs Accessibility permission)' };
-    logAction('ui_inspect', 'Inspected frontmost window UI');
-    return { elements: truncate(r.out, 3000) };
+    let appName = '', winName = '';
+    const elements = [];
+    for (const line of r.out.split('\n')) {
+      const parts = line.split('|');
+      if (parts[0] === 'APP') appName = parts[1] || '';
+      else if (parts[0] === 'WIN') winName = parts[1] || '';
+      else if (parts.length >= 6) {
+        elements.push({ role: parts[0], title: parts[1], x: +parts[2], y: +parts[3], w: +parts[4], h: +parts[5] });
+      }
+    }
+    logAction('ui_inspect', `Inspected ${appName} (${elements.length} elements)`);
+    return { app: appName, window: winName, elements, note: 'Prefer computer_click_element with a title from this list over raw coordinates.' };
+  },
+  async computer_click_element({ title, role }) {
+    if (!title) return { error: 'title is required' };
+    // Resolve the element's frame via accessibility, then click its center
+    // with the normal click machinery — element targeting beats pixel guessing.
+    const insp = await exec.ui_inspect();
+    if (insp.error) return insp;
+    const q = title.toLowerCase();
+    const match = insp.elements.find(e => (!role || e.role === role) && e.title.toLowerCase() === q)
+      || insp.elements.find(e => (!role || e.role === role) && e.title.toLowerCase().includes(q));
+    if (!match) return { error: `no element titled "${title}"${role ? ` with role ${role}` : ''} in ${insp.app}. Elements: ${insp.elements.map(e => e.title).filter(Boolean).slice(0, 15).join(', ')}` };
+    if (dryRun()) return dryPreview('computer_click_element', `Would click "${match.title}" (${match.role}) at (${Math.round(match.x + match.w / 2)}, ${Math.round(match.y + match.h / 2)})`);
+    const r = await exec.computer_click({ x: Math.round(match.x + match.w / 2), y: Math.round(match.y + match.h / 2) });
+    if (r.error) return r;
+    logAction('computer_click_element', `Clicked "${match.title}" in ${insp.app}`);
+    return { ok: true, clicked: match.title, app: insp.app };
   },
   async run_workflow({ description, steps }) {
     if (dryRun()) {
       const preview = steps.map((s, i) => `${i + 1}. ${s.tool} ${JSON.stringify(s.args || {})}`).join('\n');
       return dryPreview('run_workflow', `Workflow "${description}" would run:\n${preview}`);
     }
+    const WORKFLOW_ALLOWED = new Set(['open_app', 'open_url', 'open_file', 'computer_click', 'computer_click_element', 'computer_type', 'computer_key', 'computer_scroll']);
     const results = [];
     for (const s of steps) {
-      if (!exec[s.tool] || !s.tool.startsWith('computer_') && !['open_app', 'open_url'].includes(s.tool)) { results.push({ step: s.tool, error: 'not allowed in workflow' }); continue; }
+      if (!exec[s.tool] || !WORKFLOW_ALLOWED.has(s.tool)) { results.push({ step: s.tool, error: 'not allowed in workflow' }); continue; }
       results.push({ step: s.tool, result: await exec[s.tool](s.args || {}) });
       await new Promise(r => setTimeout(r, 400));
     }
@@ -338,10 +396,71 @@ const exec = {
     return { results };
   },
 
+  // ---- browser ----
+  async browser_tabs() {
+    const out = [];
+    const safari = await osascript(`
+      tell application "System Events" to set safariRunning to (name of processes) contains "Safari"
+      if not safariRunning then return ""
+      set o to ""
+      tell application "Safari"
+        repeat with w in windows
+          repeat with t in tabs of w
+            set o to o & "safari | " & (name of t) & " | " & (URL of t) & linefeed
+          end repeat
+        end repeat
+      end tell
+      return o`, 10000);
+    const chrome = await osascript(`
+      tell application "System Events" to set chromeRunning to (name of processes) contains "Google Chrome"
+      if not chromeRunning then return ""
+      set o to ""
+      tell application "Google Chrome"
+        repeat with w in windows
+          repeat with t in tabs of w
+            set o to o & "chrome | " & (title of t) & " | " & (URL of t) & linefeed
+          end repeat
+        end repeat
+      end tell
+      return o`, 10000);
+    for (const r of [safari, chrome]) {
+      if (!r.ok) continue;
+      for (const line of r.out.split('\n').filter(Boolean).slice(0, 30)) {
+        const [browser, title, url] = line.split(' | ');
+        out.push({ browser, title, url });
+      }
+    }
+    if (!out.length) return { tabs: [], note: 'No browser windows open (or automation permission not yet granted).' };
+    logAction('browser_tabs', `Listed ${out.length} browser tabs`);
+    return { tabs: out.slice(0, 30) };
+  },
+  async browser_read_page({ browser } = {}) {
+    const tryChrome = async () => osascript(`tell application "Google Chrome" to execute front window's active tab javascript "document.title + '\\n\\n' + document.body.innerText"`, 15000);
+    const trySafari = async () => osascript(`tell application "Safari" to do JavaScript "document.title + '\\n\\n' + document.body.innerText" in current tab of front window`, 15000);
+    let r;
+    if (browser === 'chrome') r = await tryChrome();
+    else if (browser === 'safari') r = await trySafari();
+    else { r = await trySafari(); if (!r.ok || !r.out) r = await tryChrome(); }
+    if (!r.ok) return { error: r.error + ' — enable "Allow JavaScript from Apple Events" in the browser\'s Develop/Developer menu, then retry.' };
+    if (!r.out) return { error: 'Page returned no text (blank tab or JavaScript-from-Apple-Events disabled).' };
+    logAction('browser_read_page', 'Read the frontmost browser page');
+    return { content: truncate(r.out, 8000) };
+  },
+  async browser_open_tab({ url, browser }) {
+    if (!/^https?:\/\//.test(url)) return { error: 'only http(s) urls' };
+    if (dryRun()) return dryPreview('browser_open_tab', `Would open tab: ${url}`);
+    const appName = browser === 'chrome' ? 'Google Chrome' : browser === 'safari' ? 'Safari' : null;
+    const r = appName ? await sh('open', ['-a', appName, url]) : await sh('open', [url]);
+    if (!r.ok) return { error: r.stderr || 'could not open tab' };
+    logAction('browser_open_tab', `Opened tab: ${url}`);
+    return { ok: true };
+  },
+
   // ---- confirmation & undo ----
   async confirm_action({ id, approved }) {
+    sweepPending();
     const p = pending.get(id);
-    if (!p) return { error: 'no such pending action (it may have expired)' };
+    if (!p) return { error: 'no such pending action (it may have expired — confirmations last 10 minutes)' };
     pending.delete(id);
     emit('confirm_resolved', { id });
     if (!approved) { logAction(p.tool, `CANCELLED (user declined): ${p.summary}`); return { cancelled: true }; }
@@ -394,23 +513,32 @@ const exec = {
     return requireConfirmation('calendar_create', args, `Create event "${args.title}" at ${args.start_iso} (${args.minutes || 30} min)`);
   },
   async email_list({ count = 10, unread_only = false }) {
+    // Emits the REAL inbox position of each message so email_read({index}) is
+    // always consistent, even when filtering to unread only.
+    const scanWindow = Math.min(unread_only ? 50 : count, 50);
     const script = `
       tell application "Mail"
         set out to ""
-        set msgs to messages 1 thru (${Math.min(count, 25)}) of inbox
-        repeat with m in msgs
+        set n to count of messages of inbox
+        set maxN to ${scanWindow}
+        if n < maxN then set maxN to n
+        repeat with i from 1 to maxN
+          set m to message i of inbox
           ${unread_only ? 'if read status of m is false then' : ''}
-          set out to out & (subject of m) & " | " & (sender of m) & " | " & ((read status of m) as text) & "\\n"
+          set out to out & i & " | " & (subject of m) & " | " & (sender of m) & " | " & ((read status of m) as text) & "\\n"
           ${unread_only ? 'end if' : ''}
         end repeat
         return out
       end tell`;
     const r = await osascript(script, 30000);
     if (!r.ok) return { error: r.error + ' (Mail.app must be set up; grant automation access when prompted)' };
-    const emails = r.out.split('\n').filter(Boolean).map((l, i) => { const [subject, sender, read] = l.split(' | '); return { index: i + 1, subject, sender, unread: read === 'false' }; });
-    emit('artifact', { kind: 'email', title: 'Inbox', emails });
+    const emails = r.out.split('\n').filter(Boolean).slice(0, count).map((l) => {
+      const [idx, subject, sender, read] = l.split(' | ');
+      return { index: parseInt(idx, 10), subject, sender, unread: read === 'false' };
+    });
+    emit('artifact', { kind: 'email', title: unread_only ? 'Inbox — unread' : 'Inbox', emails });
     logAction('email_list', `Listed ${emails.length} inbox emails`);
-    return { emails };
+    return { emails, note: 'index is the message position in the inbox — pass it to email_read as-is' };
   },
   async email_read({ index }) {
     const r = await osascript(`tell application "Mail" to return content of message ${index} of inbox`, 20000);
@@ -434,7 +562,12 @@ const exec = {
 
   // ---- misc ----
   async clipboard_history({ count = 10 }) {
-    const items = store.clipboardHist.data.items.slice(0, count);
+    const { safeStorage } = require('electron');
+    const decrypt = (i) => {
+      if (i.text) return i.text;
+      try { return safeStorage.decryptString(Buffer.from(i.enc, 'base64')); } catch { return '(unreadable)'; }
+    };
+    const items = store.clipboardHist.data.items.slice(0, count).map(i => ({ id: i.id, time: i.time, text: decrypt(i) }));
     emit('artifact', { kind: 'clipboard', title: 'Clipboard history', items });
     return { items: items.map(i => ({ time: i.time, text: truncate(i.text, 200) })) };
   },
