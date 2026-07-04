@@ -64,7 +64,11 @@ initCards({ injectText: (t) => RT.injectText(t) });
 
   // ---------- mic mute / unmute (button, ⌘⇧M, and voice tool) ----------
   const muteBtn = $('mute-btn');
-  function syncMuteBtn() { muteBtn.classList.toggle('muted', !RT.isMicEnabled()); }
+  function syncMuteBtn() {
+    const muted = !RT.isMicEnabled();
+    muteBtn.classList.toggle('muted', muted);
+    $('mini-mute').classList.toggle('muted', muted);
+  }
   function setMuted(muted) {
     if (!RT.isConnected()) return;
     RT.setMicEnabled(!muted);
@@ -179,11 +183,30 @@ initCards({ injectText: (t) => RT.injectText(t) });
 
   window.sparky.onSettings((s) => { settings = s; AppState.dryRun = !!s.dryRun; Wake.setEnabled(s.wakeWord); });
 
-  // ---------- computer mode: badge + mini-bubble layout ----------
+  // ---------- computer mode badge (tool gate) ----------
   window.sparky.onMode(({ mode }) => {
     settingsBtn.classList.toggle('computer-mode', mode === 'computer');
-    stage.classList.toggle('mini', mode === 'computer');
   });
+
+  // ---------- mini bubble (window state, decoupled from the tool gate) ----------
+  let isMini = false;
+  window.sparky.onMini(({ mini }) => {
+    isMini = mini;
+    stage.classList.toggle('mini', mini);
+  });
+  // Click the face (or anywhere non-button) in mini mode → restore the window.
+  stage.addEventListener('click', (e) => {
+    if (!isMini) return;
+    if (e.target.closest('#mini-controls')) return;
+    window.sparky.setMini(false);
+  });
+  $('mini-expand').addEventListener('click', () => window.sparky.setMini(false));
+  $('mini-kbd').addEventListener('click', async () => {
+    await window.sparky.setMini(false);
+    typingRow.hidden = false;
+    setTimeout(() => textField.focus(), 150); // focus after the window restores (also auto-mutes)
+  });
+  $('mini-mute').addEventListener('click', () => setMuted(RT.isMicEnabled()));
 
   // ---------- fullscreen ----------
   $('fullscreen-btn').addEventListener('click', () => window.sparky.toggleFullscreen());

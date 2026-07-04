@@ -214,12 +214,22 @@ body { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, s
 .panel-head-btns { display: flex; gap: 8px; }
 #panel-close, #panel-expand { width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer; background: rgba(29,29,31,0.07); color: rgba(29,29,31,0.6); font-size: 15px; display: flex; align-items: center; justify-content: center; }
 
-/* ==== Mini bubble (computer mode) ==== */
+/* ==== Mini bubble (corner mode) ==== */
 #stage.mini #bottom-bar, #stage.mini #cards, #stage.mini #panel,
 #stage.mini #caption, #stage.mini #top-controls, #stage.mini #timer-pill, #stage.mini #ghost-win { display: none !important; }
-#stage.mini #center { transform: none !important; }
-#stage.mini #face-wrap { transform: scale(0.58); animation: none; }
-#stage.mini #dragzone { height: 100%; }
+/* Face fully visible, nudged up to leave room for the control row */
+#stage.mini #center { transform: translateY(-16px) !important; cursor: pointer; pointer-events: auto; }
+#stage.mini #face-wrap { transform: scale(0.52); animation: none; }
+#stage.mini #dragzone { height: 26px; }
+
+#mini-controls { display: none; }
+#stage.mini #mini-controls { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; gap: 8px; z-index: 60; }
+#mini-controls button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.6); cursor: pointer; background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(1.6); -webkit-backdrop-filter: blur(20px) saturate(1.6); color: rgba(29,29,31,0.65); box-shadow: 0 4px 12px rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; transition: background 0.2s ease; }
+#mini-controls button:hover { background: rgba(255,255,255,0.8); }
+#mini-controls .ic-muted { display: none; }
+#mini-controls #mini-mute.muted { background: rgba(201,76,64,0.16); border-color: rgba(201,76,64,0.4); color: #c94c40; }
+#mini-controls #mini-mute.muted .ic-live { display: none; }
+#mini-controls #mini-mute.muted .ic-muted { display: block; }
 #panel-tabs { display: flex; gap: 4px; padding: 0 16px 12px; }
 .ptab { flex: 1; border: none; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; padding: 7px 0; border-radius: 999px; transition: background 0.2s ease, color 0.2s ease; background: transparent; color: rgba(29,29,31,0.5); }
 .ptab.active { background: rgba(255,255,255,0.85); color: #1d1d1f; }

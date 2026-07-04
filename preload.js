@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('sparky', {
   confirmResolve: (id, approved) => ipcRenderer.invoke('confirm:resolve', { id, approved }),
   hideWindow: () => ipcRenderer.invoke('window:hide'),
   toggleFullscreen: () => ipcRenderer.invoke('window:fullscreen'),
+  setMini: (mini) => ipcRenderer.invoke('window:mini', { mini }),
+  onMini: on('mini'),
   pickFiles: () => ipcRenderer.invoke('file:pick'),
   injectDelivered: (id) => ipcRenderer.send('inject:delivered', { id }),
   sessionEnded: (lines) => ipcRenderer.send('session:ended', { lines }),

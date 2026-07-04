@@ -47,7 +47,7 @@ function createWindow() {
 
   const emit = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
   tools.setEmitter((channel, payload) => emit('sparky:' + channel, payload));
-  tools.setModeCallback((mode) => setWindowMode(mode));
+  tools.setModeCallback((mode) => setWindowMini(mode === 'computer'));
 
   // Timers fire back into the conversation (or a notification if idle).
   tools.setTimerCallback((t) => {
@@ -239,23 +239,27 @@ ipcMain.handle('file:pick', async () => {
   return { files };
 });
 
-// Computer mode: shrink to a corner bubble on the display the cursor is on,
-// always on top, so Sparky stays visible while it drives the Mac (rileyjarvis-style).
+// Mini bubble: shrink to a corner bubble on the display the cursor is on,
+// always on top, so Sparky stays visible while it drives the Mac. Decoupled
+// from the tool-permission mode — the user can restore the window at any time
+// (click the bubble) without interrupting computer-mode work.
 let normalBounds = null;
-function setWindowMode(mode) {
+function setWindowMini(mini) {
   if (!win || win.isDestroyed()) return;
-  if (mode === 'computer') {
+  win.webContents.send('sparky:mini', { mini });
+  try { win.setWindowButtonVisibility(!mini); } catch {}
+  if (mini) {
     if (win.isFullScreen()) win.setFullScreen(false);
     const b = win.getBounds();
     if (b.width > 400 && b.height > 400) normalBounds = b;
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const { workArea } = display;
-    const mini = 210, margin = 18;
+    const size = 220, margin = 18;
     win.setMinimumSize(150, 150);
     win.setResizable(false);
     win.setAlwaysOnTop(true, 'floating');
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    win.setBounds({ x: workArea.x + margin, y: workArea.y + workArea.height - mini - margin, width: mini, height: mini });
+    win.setBounds({ x: workArea.x + margin, y: workArea.y + workArea.height - size - margin, width: size, height: size });
     return;
   }
   win.setAlwaysOnTop(false);
@@ -264,7 +268,9 @@ function setWindowMode(mode) {
   win.setMinimumSize(860, 620);
   if (normalBounds) win.setBounds(normalBounds);
   else { win.setBounds({ width: OVERLAY.width, height: OVERLAY.height }); win.center(); }
+  win.show(); win.focus();
 }
+ipcMain.handle('window:mini', (_e, { mini }) => setWindowMini(!!mini));
 
 // ---------- app lifecycle ----------
 app.setName('Sparky');
