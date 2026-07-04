@@ -608,6 +608,11 @@ const exec = {
     return { ok: true };
   },
   async set_mood({ mood }) { emit('mood', { mood }); return { ok: true, silent: true }; },
+  async mic_control({ muted }) {
+    emit('mic', { muted: !!muted });
+    logAction('mic_control', muted ? 'Muted microphone (voice command)' : 'Unmuted microphone');
+    return { ok: true, muted: !!muted, note: muted ? 'Mic is muted — the user can unmute with the mic button, ⌘⇧M, or by saying Hey Sparky. Acknowledge briefly, then stay quiet.' : 'Mic is live again.' };
+  },
   async settings_get() { return store.settings.data; },
   async settings_set({ key, value }) {
     if (!(key in store.settings.data)) return { error: 'unknown setting' };

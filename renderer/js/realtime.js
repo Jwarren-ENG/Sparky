@@ -304,7 +304,7 @@ import { AppState } from './state.js';
       micStream?.getAudioTracks().forEach(t => { t.enabled = micEnabled; });
       if (connected) {
         if (micEnabled) { Face.setMode('listening'); emit('status', 'Listening', 'listening'); }
-        else { Face.setMode('idle'); emit('status', 'Ready', 'idle'); }
+        else { Face.setMode('idle'); emit('status', 'Mic muted', 'idle'); }
       }
     },
     on: (ev, fn) => listeners[ev].push(fn),

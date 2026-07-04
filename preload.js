@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('sparky', {
   onMode: on('mode'),
   onLog: on('log'),
   onLogAppend: on('log_append'),
+  onToggleMic: on('toggle_mic'),
+  onMic: on('mic'),
   onTimers: on('timers'),
   onInject: on('inject'),
   onConfirm: on('confirm'),

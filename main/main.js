@@ -293,6 +293,9 @@ app.whenReady().then(async () => {
     if (win.isVisible() && win.isFocused()) win.hide();
     else { win.show(); win.focus(); }
   });
+  globalShortcut.register('CommandOrControl+Shift+M', () => {
+    win?.webContents.send('sparky:toggle_mic');
+  });
 
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else { win?.show(); win?.focus(); } });
 });

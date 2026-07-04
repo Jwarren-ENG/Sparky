@@ -59,8 +59,23 @@ initCards({ injectText: (t) => RT.injectText(t) });
   });
   // Keep the wake listener alive during mic-muted (typed) sessions so
   // "Hey Sparky" can upgrade them to voice.
-  RT.on('connected', () => { if (RT.isMicEnabled()) Wake.onSessionStart(); });
-  RT.on('disconnected', () => { Wake.onSessionEnd(); caption.hidden = true; });
+  RT.on('connected', () => { if (RT.isMicEnabled()) Wake.onSessionStart(); muteBtn.hidden = false; syncMuteBtn(); });
+  RT.on('disconnected', () => { Wake.onSessionEnd(); caption.hidden = true; muteBtn.hidden = true; muteBtn.classList.remove('muted'); });
+
+  // ---------- mic mute / unmute (button, ⌘⇧M, and voice tool) ----------
+  const muteBtn = $('mute-btn');
+  function syncMuteBtn() { muteBtn.classList.toggle('muted', !RT.isMicEnabled()); }
+  function setMuted(muted) {
+    if (!RT.isConnected()) return;
+    RT.setMicEnabled(!muted);
+    if (muted) Wake.onSessionEnd();   // "Hey Sparky" can unmute
+    else Wake.onSessionStart();
+    syncMuteBtn();
+  }
+  muteBtn.addEventListener('click', () => setMuted(RT.isMicEnabled()));
+  RT.on('status', () => syncMuteBtn()); // covers wake-word unmutes too
+  window.sparky.onToggleMic(() => setMuted(RT.isMicEnabled()));
+  window.sparky.onMic(({ muted }) => setMuted(!!muted));
 
   // ---------- typing ----------
   const typingRow = $('typing-row');

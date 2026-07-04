@@ -76,6 +76,7 @@ const TOOLS = [
   { name: 'timer_list', description: 'List active timers/reminders.', parameters: P({}) },
   { name: 'timer_cancel', description: 'Cancel a timer by id.', parameters: P({ id: S('timer id') }, ['id']) },
   { name: 'set_mood', description: 'Set your face mood: neutral | happy | excited | focused | sheepish | concerned.', parameters: P({ mood: S('the mood') }, ['mood']) },
+  { name: 'mic_control', description: 'Mute or unmute your microphone when the user asks ("stop listening", "mute yourself", "unmute"). While muted, "Hey Sparky" or the mic button unmutes.', parameters: P({ muted: B('true to mute, false to unmute') }, ['muted']) },
   { name: 'settings_get', description: 'Read Sparky settings (dry run, quiet hours, wake word, proactivity).', parameters: P({}) },
   { name: 'settings_set', description: 'Change a Sparky setting. RISKY for quietHours/proactivity changes only if user asked.', parameters: P({ key: S('dryRun | wakeWord | proactivity | quietHours | userName | proactiveIntervalMin'), value: { description: 'new value (bool, string, number, or {enabled,start,end} for quietHours)' } }, ['key']) },
 ];
