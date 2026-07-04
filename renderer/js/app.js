@@ -84,6 +84,11 @@ initCards({ injectText: (t) => RT.injectText(t) });
     typingRow.hidden = !typingRow.hidden;
     if (!typingRow.hidden) textField.focus(); else textField.value = '';
   });
+  // Typing intent = mute: the mic goes quiet the moment the field is focused,
+  // so composing text never competes with voice pickup.
+  textField.addEventListener('focus', () => {
+    if (RT.isConnected() && RT.isMicEnabled()) setMuted(true);
+  });
   async function submitText() {
     const text = textField.value.trim();
     if (!text) return;
