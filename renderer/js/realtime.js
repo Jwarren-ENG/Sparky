@@ -245,9 +245,10 @@ import { AppState } from './state.js';
     const cardId = SKIP_CARD.has(name) ? null : Cards.startTool(name, summarize(name, args));
 
     // Ghost "Sparky is controlling" window for computer-control tools.
-    if (['open_app', 'computer_click', 'computer_type', 'computer_key', 'computer_scroll', 'run_workflow'].includes(name)) {
+    if (['open_app', 'computer_click', 'computer_click_element', 'computer_type', 'computer_key', 'computer_scroll', 'run_workflow'].includes(name)) {
       Ghost.show(summarize(name, args), name === 'open_app' ? args.name : null, AppState.dryRun);
     }
+    if (name === 'read_screen' || name === 'ui_inspect') Face.react('focused', 1500); // squint while studying the screen
 
     const result = await window.sparky.runTool(name, args);
 

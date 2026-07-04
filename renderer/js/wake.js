@@ -1,6 +1,7 @@
 // Wake-word listener: energy-gated recording → transcription → "hey sparky".
 // Runs only while disconnected and wakeWord setting is on.
 import { RT } from './realtime.js';
+import { Face } from './face.js';
 
   let enabled = false;
   let running = false;
@@ -73,6 +74,7 @@ import { RT } from './realtime.js';
         const r = await window.sparky.wakeTranscribe(buf);
         if (r.text && WAKE_RE.test(r.text)) {
           console.log('wake word heard:', r.text);
+          Face.react('excited', 700); // quick brow raise: "I heard you"
           stop();
           // Mid typed-session, "Hey Sparky" unmutes the mic instead of no-op.
           if (RT.isConnected() && !RT.isMicEnabled()) RT.setMicEnabled(true);

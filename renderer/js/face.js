@@ -104,11 +104,37 @@
   }
   requestAnimationFrame(tick);
 
+  // Pause the animation loop entirely while hidden (battery).
+  let rafPaused = false;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') rafPaused = true;
+    else if (rafPaused) { rafPaused = false; requestAnimationFrame(tick); }
+  });
+  const _origTick = tick;
+  tick = (t) => { if (rafPaused) return; _origTick(t); };
+
+  // Micro-reaction: a brief mood override that snaps back automatically.
+  let reactTimer = null;
+  function react(mood, ms = 450) {
+    if (!MOODS[mood]) return;
+    const prev = state.mood;
+    state.mood = mood;
+    clearTimeout(reactTimer);
+    reactTimer = setTimeout(() => { if (state.mood === mood) state.mood = prev; }, ms);
+  }
+  // Eye-dart toward the panel (right side) when content lands there.
+  function glanceRight() {
+    look.tx = 0.9; look.ty = -0.1;
+    setTimeout(() => { look.tx *= 0.2; look.ty = 0; }, 900);
+  }
+
   export const Face = {
     setMood: (m) => { if (MOODS[m]) state.mood = m; },
     setMode: (m) => { state.mode = m; },
     setMouthShape: (s) => { state.mouthShape = s; },
     getMode: () => state.mode,
+    react,
+    glanceRight,
   };
 
   window.sparky.onMood(({ mood }) => Face.setMood(mood));

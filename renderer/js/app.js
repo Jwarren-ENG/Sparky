@@ -178,7 +178,7 @@ initCards({ injectText: (t) => RT.injectText(t) });
     if (a.kind === 'menu') Cards.showMenu(a.title, a.options);
     else if (a.kind === 'notes') { Panel.renderNotes(a.items); badge(); }
     else if (a.kind === 'log') { Panel.renderLog(a.items); Panel.openTo('log'); }
-    else Panel.renderArtifact(a);
+    else { Panel.renderArtifact(a); Face.glanceRight(); } // eye-dart toward new content
   });
   window.sparky.onPlan((plan) => Panel.renderPlan(plan));
   window.sparky.onWorkingMemory(({ beliefs }) => { Panel.renderWorkingMemory(beliefs); badge(); });
@@ -187,7 +187,7 @@ initCards({ injectText: (t) => RT.injectText(t) });
   window.sparky.onTimers((items) => TimerPill.render(items));
 
   // ---------- risky-action confirmation ----------
-  window.sparky.onConfirm(({ id, summary }) => Cards.showConfirm(id, summary));
+  window.sparky.onConfirm(({ id, summary, detail }) => Cards.showConfirm(id, summary, detail));
   window.sparky.onConfirmResolved(({ id }) => Cards.resolveConfirm(id));
 
   // ---------- init ----------
@@ -206,8 +206,15 @@ initCards({ injectText: (t) => RT.injectText(t) });
     activate: async () => { if (!RT.isConnected()) await RT.connect({ micEnabled: true }); },
   };
 
-  // Escape hides the window (design has no visible close control).
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.sparky.hideWindow(); });
+  // Escape hides the window; ⌘K summons the type-to-Sparky field.
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.sparky.hideWindow();
+    if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      typingRow.hidden = false;
+      textField.focus();
+    }
+  });
 
 // Debug namespace — intentional; also used by the test harness.
 Object.assign(window, { Face, Cards, Panel, RT, Wake, TimerPill, Ghost, AppState, App });

@@ -111,10 +111,11 @@ export function initCards(deps) { injectTextFn = deps.injectText; }
   }
 
   // ---------- risky-action confirmation ----------
-  function showConfirm(id, summary) {
+  function showConfirm(id, summary, detail) {
     const cardId = 'confirm_' + id;
     const el = shell(cardId);
-    el.innerHTML = head('⚠️', AMBER_BG, 'Approval needed', summary, false) + `
+    el.innerHTML = head('⚠️', AMBER_BG, summary || 'Approval needed', null, false) +
+      (detail ? `<div class="card-body confirm-detail">${esc(detail).replace(/\n/g, '<br>')}</div>` : '') + `
       <div class="card-options">
         <button class="card-opt" data-approve="true"><div class="card-opt-text"><div class="card-opt-label">Approve</div><div class="card-opt-sub">Do it now</div></div><div class="card-opt-cta">Go</div></button>
         <button class="card-opt" data-approve="false"><div class="card-opt-text"><div class="card-opt-label">Decline</div><div class="card-opt-sub">Cancel this action</div></div><div class="card-opt-cta">Cancel</div></button>

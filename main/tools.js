@@ -34,11 +34,11 @@ function sweepPending() {
   const now = Date.now();
   for (const [k, v] of pending) if (now - v.created > CONFIRM_TTL_MS) pending.delete(k);
 }
-function requireConfirmation(tool, args, summary) {
+function requireConfirmation(tool, args, summary, detail = null) {
   sweepPending();
   const id = uid('c_');
   pending.set(id, { tool, args, summary, created: Date.now() });
-  emit('confirm', { id, summary });
+  emit('confirm', { id, summary, detail });
   return { status: 'awaiting_confirmation', id, summary, instruction: 'Ask the user out loud. Only after a clear yes, call confirm_action with approved=true.' };
 }
 
@@ -177,7 +177,10 @@ const exec = {
     const t = store.db.data.tables[table] || [];
     const rec = t.find(r => r.id === id);
     if (!rec) return { error: 'record not found' };
-    return requireConfirmation('db_delete', { table, id }, `Delete record ${id} from "${table}": ${truncate(JSON.stringify(rec), 120)}`);
+    // The card shows the actual record being deleted — approve with eyes open.
+    const fields = Object.entries(rec).filter(([k]) => !['id', 'created', 'updated'].includes(k)).slice(0, 4)
+      .map(([k, v]) => `${k}: ${truncate(String(typeof v === 'object' ? JSON.stringify(v) : v), 40)}`).join('\n');
+    return requireConfirmation('db_delete', { table, id }, `Delete record from "${table}"`, fields || id);
   },
 
   // ---- memory ----
@@ -510,7 +513,9 @@ const exec = {
     return { events };
   },
   async calendar_create(args) {
-    return requireConfirmation('calendar_create', args, `Create event "${args.title}" at ${args.start_iso} (${args.minutes || 30} min)`);
+    const start = new Date(args.start_iso);
+    const detail = `${args.title}\n${start.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · ${args.minutes || 30} min${args.calendar ? ` · ${args.calendar}` : ''}`;
+    return requireConfirmation('calendar_create', args, 'Create calendar event', detail);
   },
   async email_list({ count = 10, unread_only = false }) {
     // Emits the REAL inbox position of each message so email_read({index}) is
