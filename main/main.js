@@ -11,18 +11,21 @@ const instructions = require('./instructions');
 const { TOOLS } = require('./tooldefs');
 
 let win = null;
-const COMPACT = { width: 380, height: 560 };
-const EXPANDED = { width: 1160, height: 720 };
+const OVERLAY = { width: 1040, height: 760 };
 
 function createWindow() {
+  const display = screen.getPrimaryDisplay();
+  const x = Math.round(display.workArea.x + (display.workArea.width - OVERLAY.width) / 2);
+  const y = Math.round(display.workArea.y + (display.workArea.height - OVERLAY.height) / 2);
   win = new BrowserWindow({
-    ...COMPACT,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    resizable: true,
-    hasShadow: false,
-    skipTaskbar: false,
+    ...OVERLAY,
+    x, y,
+    minWidth: 860,
+    minHeight: 620,
+    titleBarStyle: 'hidden',                    // native traffic lights, no title bar
+    trafficLightPosition: { x: 18, y: 18 },
+    backgroundColor: '#e9e2e6',
+    title: 'Sparky',
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,
@@ -30,7 +33,12 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  // Behave like a normal macOS app: the red button hides the window;
+  // clicking the Dock icon (or ⌘⇧S) brings it back. ⌘Q actually quits.
+  win.on('close', (e) => {
+    if (!app.isQuittingForReal) { e.preventDefault(); win.hide(); }
+  });
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
     console.log(`[renderer] ${message} (${sourceId}:${line})`);
   });
@@ -38,6 +46,7 @@ function createWindow() {
 
   const emit = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
   tools.setEmitter((channel, payload) => emit('sparky:' + channel, payload));
+  tools.setModeCallback((mode) => setWindowMode(mode));
 
   // Timers fire back into the conversation (or a notification if idle).
   tools.setTimerCallback((t) => {
@@ -47,16 +56,6 @@ function createWindow() {
   proactive.setNotifier((text) => {
     injectOrNotify(`Proactive trigger — mention this to the user naturally and briefly: ${text}`, text);
   });
-
-  // Cursor position → eye tracking (screen coords relative to window center).
-  setInterval(() => {
-    if (!win || win.isDestroyed() || !win.isVisible()) return;
-    try {
-      const c = screen.getCursorScreenPoint();
-      const b = win.getBounds();
-      emit('sparky:cursor', { dx: c.x - (b.x + 190), dy: c.y - (b.y + 160) });
-    } catch {}
-  }, 80);
 
   // Clipboard history poller.
   let lastClip = clipboard.readText();
@@ -89,16 +88,19 @@ ipcMain.handle('session:secret', async () => {
     type: 'realtime',
     model: process.env.REALTIME_MODEL || 'gpt-realtime-2',
     output_modalities: ['audio'],
+    reasoning: { effort: 'low' },
     audio: {
       input: {
-        transcription: { model: process.env.TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe' },
-        turn_detection: { type: 'semantic_vad' },
+        // language pinned so captions never come back transcribed into another language
+        transcription: { model: process.env.TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe', language: process.env.SPEECH_LANGUAGE || 'en' },
+        turn_detection: { type: 'semantic_vad', eagerness: 'medium', create_response: true, interrupt_response: true },
       },
       output: { voice: process.env.VOICE || 'cedar' },
     },
     instructions: instructions.build(),
     tools: TOOLS,
     tool_choice: 'auto',
+    tracing: { workflow_name: 'Sparky Desktop Companion' },
   };
   try {
     const j = await oa.mintRealtimeSecret(sessionConfig);
@@ -135,6 +137,7 @@ ipcMain.handle('state:init', () => ({
   plan: store.plan.data.current,
   notes: store.notes.data.items,
   log: tools.publicLog(),
+  timers: store.timers.data.items,
 }));
 
 // Plan controls from the panel (pause/resume/cancel/edit) — persist + inform the model.
@@ -162,19 +165,53 @@ ipcMain.handle('confirm:resolve', (_e, { id, approved }) => {
   return { ok: true };
 });
 
-ipcMain.handle('window:mode', (_e, mode) => {
-  if (!win) return;
-  if (mode === 'fullscreen') win.setFullScreen(!win.isFullScreen());
-  else if (mode === 'expanded') { win.setFullScreen(false); const b = win.getBounds(); win.setBounds({ ...EXPANDED, x: Math.max(20, b.x - (EXPANDED.width - b.width)), y: b.y }); }
-  else { win.setFullScreen(false); const b = win.getBounds(); win.setBounds({ ...COMPACT, x: b.x + Math.max(0, b.width - COMPACT.width), y: b.y }); }
-});
-
 ipcMain.handle('window:hide', () => win?.hide());
+ipcMain.handle('window:fullscreen', () => { if (win) win.setFullScreen(!win.isFullScreen()); });
+
+// Computer mode: shrink to a corner bubble on the display the cursor is on,
+// always on top, so Sparky stays visible while it drives the Mac (rileyjarvis-style).
+let normalBounds = null;
+function setWindowMode(mode) {
+  if (!win || win.isDestroyed()) return;
+  if (mode === 'computer') {
+    if (win.isFullScreen()) win.setFullScreen(false);
+    const b = win.getBounds();
+    if (b.width > 400 && b.height > 400) normalBounds = b;
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const { workArea } = display;
+    const mini = 210, margin = 18;
+    win.setMinimumSize(150, 150);
+    win.setResizable(false);
+    win.setAlwaysOnTop(true, 'floating');
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setBounds({ x: workArea.x + margin, y: workArea.y + workArea.height - mini - margin, width: mini, height: mini });
+    return;
+  }
+  win.setAlwaysOnTop(false);
+  win.setVisibleOnAllWorkspaces(false);
+  win.setResizable(true);
+  win.setMinimumSize(860, 620);
+  if (normalBounds) win.setBounds(normalBounds);
+  else { win.setBounds({ width: OVERLAY.width, height: OVERLAY.height }); win.center(); }
+}
 
 // ---------- app lifecycle ----------
+app.setName('Sparky');
+
+// Single instance: double-clicking Sparky.app while running just summons the window.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.quit();
+app.on('second-instance', () => { if (win) { win.show(); win.focus(); } });
+
 app.whenReady().then(async () => {
   if (process.platform === 'darwin') {
     try { await systemPreferences.askForMediaAccess('microphone'); } catch {}
+    try {
+      const { nativeImage } = require('electron');
+      const iconPath = path.join(__dirname, '..', 'assets', 'icon.png');
+      const img = nativeImage.createFromPath(iconPath);
+      if (!img.isEmpty()) app.dock.setIcon(img);
+    } catch {}
   }
   createWindow();
   tools.rescheduleAll();
@@ -186,8 +223,9 @@ app.whenReady().then(async () => {
     else { win.show(); win.focus(); }
   });
 
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else win?.show(); });
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else { win?.show(); win?.focus(); } });
 });
 
+app.on('before-quit', () => { app.isQuittingForReal = true; });
 app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

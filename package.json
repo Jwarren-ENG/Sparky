@@ -4,7 +4,9 @@
   "description": "Sparky — a Jarvis-like desktop AI companion (OpenAI Realtime voice + tools)",
   "main": "main/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "shim": "bash scripts/apply-shim.sh",
+    "postinstall": "bash scripts/apply-shim.sh || true"
   },
   "devDependencies": {
     "electron": "^33.0.0"

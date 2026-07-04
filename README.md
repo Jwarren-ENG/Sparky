@@ -4,7 +4,15 @@ A Jarvis-like desktop AI companion for macOS. Real-time voice via OpenAI
 `gpt-realtime-2` (WebRTC), an animated face, an artifact panel, persistent
 memory, a task engine, proactive nudges, and (careful) computer control.
 
-## Setup
+## Opening & closing (no terminal needed)
+
+- **Open**: double-click **Sparky** in `/Applications`, click its Dock icon, or find it in Spotlight. Also summonable anywhere with **⌘⇧S**. (The Electron runtime bundle itself is branded as Sparky and always boots Sparky — pin either icon to the Dock, both work.)
+- **Note**: running `npm install`/updating the `electron` package rebuilds its bundle and removes the embedded launcher shim — if the Dock icon ever shows Electron's welcome screen after an update, run `npm run shim` to re-apply it.
+- **Close (red button)**: hides the window — Sparky keeps running in the Dock. Click the Dock icon or press ⌘⇧S to bring it back.
+- **Minimize (yellow button)**: standard macOS minimize.
+- **Quit fully**: right-click the Dock icon → Quit, or **⌘Q** in the app.
+
+## Setup (first time / development)
 
 ```bash
 npm install

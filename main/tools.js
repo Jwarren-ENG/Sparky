@@ -22,7 +22,7 @@ function logAction(tool, summary, { undo = null, dryRun = false } = {}) {
   store.actionLog.data.items.unshift(entry);
   store.actionLog.data.items = store.actionLog.data.items.slice(0, 500);
   store.actionLog.save();
-  emit('artifact', { kind: 'log', title: 'Action log', items: publicLog() });
+  emit('log', publicLog()); // keeps the panel's Log tab fresh without opening it
   return entry;
 }
 const publicLog = () => store.actionLog.data.items.map(({ _undo, ...rest }) => rest).slice(0, 100);
@@ -235,8 +235,9 @@ const exec = {
     if (!['display', 'computer'].includes(mode)) return { error: 'mode must be display or computer' };
     computerMode = mode === 'computer';
     emit('mode', { mode });
+    onModeChange(mode); // main shrinks the window to a corner bubble in computer mode
     logAction('set_mode', `Switched to ${mode} mode`);
-    return { ok: true, mode, note: computerMode ? 'Computer control unlocked. Dry-run and confirmations still apply.' : 'Back to display mode; computer control locked.' };
+    return { ok: true, mode, note: computerMode ? 'Computer control unlocked; the window shrank to a corner bubble so you can see the screen. Dry-run and confirmations still apply.' : 'Back to display mode; computer control locked.' };
   },
   async open_app({ name }) {
     if (dryRun()) return dryPreview('open_app', `Would open app "${name}"`);
@@ -454,6 +455,7 @@ const exec = {
     const t = { id: uid('t_'), label, fireAt, created: nowISO() };
     store.timers.data.items.push(t); store.timers.save();
     scheduleTimer(t);
+    emit('timers', store.timers.data.items);
     logAction('timer_set', `Set ${seconds ? 'timer' : 'reminder'}: "${label}" at ${new Date(fireAt).toLocaleTimeString()}`);
     return { ok: true, id: t.id, fires_at: new Date(fireAt).toISOString() };
   },
@@ -463,6 +465,7 @@ const exec = {
   async timer_cancel({ id }) {
     clearTimeout(liveTimers.get(id)); liveTimers.delete(id);
     store.timers.data.items = store.timers.data.items.filter(t => t.id !== id); store.timers.save();
+    emit('timers', store.timers.data.items);
     logAction('timer_cancel', `Cancelled timer ${id}`);
     return { ok: true };
   },
@@ -506,6 +509,10 @@ function dryPreview(tool, summary) {
   return { dry_run: true, would_do: summary, note: 'Dry-run mode is on — nothing was executed. Tell the user what would happen and how to disable dry run if they want it done for real.' };
 }
 
+// ---------- callbacks into main ----------
+let onModeChange = () => {};
+function setModeCallback(fn) { onModeChange = fn; }
+
 // ---------- timers ----------
 let onTimerFire = () => {};
 function setTimerCallback(fn) { onTimerFire = fn; }
@@ -516,6 +523,7 @@ function scheduleTimer(t) {
     store.timers.data.items = store.timers.data.items.filter(x => x.id !== t.id);
     store.timers.save();
     liveTimers.delete(t.id);
+    emit('timers', store.timers.data.items);
     onTimerFire(t);
   }, delay));
 }
@@ -536,4 +544,4 @@ async function execute(name, args) {
   }
 }
 
-module.exports = { execute, setEmitter, setTimerCallback, rescheduleAll, logAction, publicLog };
+module.exports = { execute, setEmitter, setTimerCallback, setModeCallback, rescheduleAll, logAction, publicLog };

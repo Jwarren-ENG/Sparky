@@ -20,7 +20,10 @@ async function oai(pathname, body, opts = {}) {
 
 // Mint an ephemeral client secret for a Realtime session (WebRTC happens in renderer).
 async function mintRealtimeSecret(sessionConfig) {
-  return oai('/realtime/client_secrets', { session: sessionConfig });
+  const crypto = require('crypto');
+  return oai('/realtime/client_secrets', { session: sessionConfig }, {
+    headers: { 'OpenAI-Safety-Identifier': crypto.createHash('sha256').update('sparky-local-desktop').digest('hex') },
+  });
 }
 
 async function embed(text) {
@@ -52,6 +55,7 @@ async function transcribeWebm(buffer) {
   const form = new FormData();
   form.append('file', new Blob([buffer], { type: 'audio/webm' }), 'audio.webm');
   form.append('model', process.env.TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe');
+  form.append('language', process.env.SPEECH_LANGUAGE || 'en');
   const res = await fetch(API + '/audio/transcriptions', {
     method: 'POST', headers: { Authorization: `Bearer ${key()}` }, body: form,
   });

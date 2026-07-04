@@ -102,7 +102,12 @@
     pc = dc = micStream = null; analyser = null;
     window.Face.setMode('idle');
     emit('disconnected', reason);
-    emit('status', 'standby — say “Hey Sparky” or press talk', 'idle');
+    emit('status', 'Say “Hey Sparky”', 'idle');
+  }
+
+  function settleToListening() {
+    emit('status', 'Done ✨', 'idle');
+    setTimeout(() => { if (connected && !runningTools.size) { window.Face.setMode('listening'); emit('status', 'Listening', 'listening'); } }, 900);
   }
 
   async function handleEvent(ev) {
@@ -112,35 +117,32 @@
         break;
       case 'response.done':
         activeResponse = false;
-        if (runningTools.size) { emit('status', `working: ${[...runningTools].join(', ')}`, 'thinking'); window.Face.setMode('thinking'); }
-        else if (window.Face.getMode() !== 'speaking') { window.Face.setMode('listening'); emit('status', 'listening', 'listening'); }
+        if (runningTools.size) { emit('status', 'Working…', 'thinking'); window.Face.setMode('thinking'); }
+        else if (window.Face.getMode() !== 'speaking') { settleToListening(); }
         if (pendingResponseKick) { pendingResponseKick = false; send({ type: 'response.create' }); }
         break;
 
       case 'output_audio_buffer.started':
         window.Face.setMode('speaking');
-        emit('status', 'speaking', 'speaking');
+        emit('status', 'Speaking…', 'speaking');
         break;
       case 'output_audio_buffer.stopped':
       case 'output_audio_buffer.cleared':
-        window.Face.setMode(runningTools.size ? 'thinking' : 'listening');
-        emit('status', runningTools.size ? `working: ${[...runningTools].join(', ')}` : 'listening', runningTools.size ? 'thinking' : 'listening');
+        if (runningTools.size) { window.Face.setMode('thinking'); emit('status', 'Working…', 'thinking'); }
+        else settleToListening();
         break;
 
       case 'input_audio_buffer.speech_started':
-        emit('status', 'hearing you…', 'listening');
+        window.Face.setMode('listening');
+        emit('status', 'Listening', 'listening');
         break;
       case 'input_audio_buffer.speech_stopped':
         window.Face.setMode('thinking');
-        emit('status', 'thinking…', 'thinking');
+        emit('status', 'Thinking…', 'thinking');
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
-        if (ev.transcript?.trim()) emit('caption', 'u', ev.transcript.trim());
-        break;
-      case 'response.output_audio_transcript.done':
-      case 'response.audio_transcript.done':
-        if (ev.transcript?.trim()) emit('caption', 'a', ev.transcript.trim());
+        if (ev.transcript?.trim()) emit('caption', ev.transcript.trim());
         break;
 
       case 'response.output_item.done':
@@ -153,34 +155,45 @@
     }
   }
 
+  // Tools whose UI feedback is already handled elsewhere (a dedicated card,
+  // or an invisible state update) — no need for a generic spinner card too.
+  const SKIP_CARD = new Set(['show_menu', 'set_mood', 'working_memory_set', 'plan_update', 'settings_get']);
+
+  function summarize(name, args) {
+    if (name === 'web_search') return `Searching: "${args.query || ''}"`.slice(0, 60);
+    if (name === 'generate_image') return `Generating image: "${args.prompt || ''}"`.slice(0, 60);
+    if (name === 'open_app') return `Opening ${args.name || 'app'}`;
+    if (name === 'computer_click') return `Clicking at (${args.x}, ${args.y})`;
+    if (name === 'computer_type') return `Typing ${args.text?.length || 0} chars`;
+    if (name === 'read_screen') return 'Reading screen';
+    if (name === 'note_add') return `Adding note: "${args.text || ''}"`.slice(0, 60);
+    if (name === 'timer_set') return `Setting timer: ${args.label || ''}`;
+    if (name === 'calendar_create') return `Creating event: ${args.title || ''}`;
+    if (name === 'plan_create') return `Planning: ${args.goal || ''}`.slice(0, 60);
+    return name.replace(/_/g, ' ');
+  }
+
   async function runTool(item) {
     const { name, call_id } = item;
     let args = {};
     try { args = JSON.parse(item.arguments || '{}'); } catch {}
     runningTools.add(name);
     window.Face.setMode('thinking');
-    emit('status', `working`, 'thinking');
+    emit('status', 'Working…', 'thinking');
 
-    // Show action card for this tool
-    let summary = name;
-    if (name === 'web_search') summary = `Searching: "${args.query || ''}"`.slice(0, 60);
-    else if (name === 'generate_image') summary = `Generating image: "${args.prompt || ''}"`.slice(0, 60);
-    else if (name === 'open_app') summary = `Opening ${args.name || 'app'}`;
-    else if (name === 'computer_click') summary = `Clicking at (${args.x}, ${args.y})`;
-    else if (name === 'computer_type') summary = `Typing ${args.text?.length || 0} chars`;
-    else if (name === 'read_screen') summary = `Reading screen`;
-    else if (name === 'note_add') summary = `Adding note: "${args.text || ''}"`.slice(0, 60);
-    else if (name === 'timer_set') summary = `Setting timer: ${args.label || ''}`;
-    else if (name === 'calendar_create') summary = `Creating event: ${args.title || ''}`;
-    const cardId = window.Cards.showToolRunning(name, summary);
+    const cardId = SKIP_CARD.has(name) ? null : window.Cards.startTool(name, summarize(name, args));
+
+    // Ghost "Sparky is controlling" window for computer-control tools.
+    if (['open_app', 'computer_click', 'computer_type', 'computer_key', 'computer_scroll', 'run_workflow'].includes(name)) {
+      window.Ghost?.show(summarize(name, args), name === 'open_app' ? args.name : null, window.AppState?.dryRun);
+    }
 
     const result = await window.sparky.runTool(name, args);
 
     runningTools.delete(name);
     if (!connected) return;
 
-    // Mark card done
-    window.Cards.markDone(cardId);
+    if (cardId) window.Cards.finishTool(cardId);
 
     send({
       type: 'conversation.item.create',
@@ -194,6 +207,9 @@
   // System-side injections (proactive triggers, timers, panel actions).
   window.sparky.onInject(({ text }) => {
     if (!connected) return; // idle → main falls back to OS notification
+    // Surface a light ambient card for proactive nudges / timer fires.
+    const clean = text.replace(/^\[[^\]]*\]\s*/, '').replace(/^Proactive trigger[^:]*:\s*/i, '').replace(/^Timer fired:\s*/i, '⏱ ');
+    if (/^(Proactive trigger|Timer fired)/i.test(text)) window.Cards?.showAmbient(clean);
     send({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text }] } });
     kickResponse();
   });
