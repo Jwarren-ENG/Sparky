@@ -30,14 +30,15 @@ initCards({ injectText: (t) => RT.injectText(t) });
   applyTheme();
   setInterval(applyTheme, 10 * 60 * 1000);
 
-  // ---------- voice pill ----------
-  // Not connected → start a voice session. Connected with mic muted (typed
-  // session) → unmute. Connected and live → end the session.
+  // ---------- voice pill: always a TALK toggle ----------
+  // Not connected → start talking. Connected → mute/unmute. The ✕ next to it
+  // ends the session — the pill never kills your conversation by surprise.
   voicePill.addEventListener('click', async () => {
     if (!RT.isConnected()) await RT.connect({ micEnabled: true });
-    else if (!RT.isMicEnabled()) { RT.setMicEnabled(true); Wake.onSessionStart(); }
-    else RT.disconnect();
+    else if (!RT.isMicEnabled()) { setMuted(false); }
+    else setMuted(true);
   });
+  $('end-btn').addEventListener('click', () => RT.disconnect());
 
   const ariaStatus = document.createElement('div');
   ariaStatus.setAttribute('aria-live', 'polite');
@@ -60,8 +61,8 @@ initCards({ injectText: (t) => RT.injectText(t) });
   });
   // Keep the wake listener alive during mic-muted (typed) sessions so
   // "Hey Sparky" can upgrade them to voice.
-  RT.on('connected', () => { if (RT.isMicEnabled()) Wake.onSessionStart(); muteBtn.hidden = false; syncMuteBtn(); });
-  RT.on('disconnected', () => { Wake.onSessionEnd(); caption.hidden = true; muteBtn.hidden = true; muteBtn.classList.remove('muted'); });
+  RT.on('connected', () => { if (RT.isMicEnabled()) Wake.onSessionStart(); muteBtn.hidden = false; $('end-btn').hidden = false; syncMuteBtn(); });
+  RT.on('disconnected', () => { Wake.onSessionEnd(); caption.hidden = true; muteBtn.hidden = true; $('end-btn').hidden = true; muteBtn.classList.remove('muted'); voicePill.classList.remove('muted'); });
 
   // ---------- mic mute / unmute (button, ⌘⇧M, and voice tool) ----------
   const muteBtn = $('mute-btn');
@@ -69,6 +70,7 @@ initCards({ injectText: (t) => RT.injectText(t) });
     const muted = !RT.isMicEnabled();
     muteBtn.classList.toggle('muted', muted);
     $('mini-mute').classList.toggle('muted', muted);
+    voicePill.classList.toggle('muted', muted && RT.isConnected());
   }
   function setMuted(muted) {
     if (!RT.isConnected()) return;

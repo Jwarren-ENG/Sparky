@@ -89,6 +89,7 @@ import { AppState } from './state.js';
   }
 
   let micEnabled = true;
+  let audioSender = null; // RTCRtpSender — hard mute detaches the track entirely
 
   async function connect(opts = {}) {
     if (connected) return { ok: true };
@@ -105,8 +106,16 @@ import { AppState } from './state.js';
       }
       micStream.getTracks().forEach(t => { t.enabled = micEnabled; });
       pc = new RTCPeerConnection();
-      micStream.getTracks().forEach(t => pc.addTrack(t, micStream));
+      micStream.getTracks().forEach(t => { audioSender = pc.addTrack(t, micStream); });
       pc.ontrack = (e) => { audioEl.srcObject = e.streams[0]; attachAnalyser(e.streams[0]); };
+
+      // connect() must not resolve until the data channel is actually open —
+      // otherwise the first typed message is sent into a closed channel.
+      let dcOpenResolve;
+      const dcOpen = new Promise((res, rej) => {
+        dcOpenResolve = res;
+        setTimeout(() => rej(new Error('connection timed out')), 15000);
+      });
 
       dc = pc.createDataChannel('oai-events');
       dc.onmessage = (e) => handleEvent(JSON.parse(e.data));
@@ -117,6 +126,7 @@ import { AppState } from './state.js';
         if (micEnabled) Face.setMode('listening');
         // Greeting only for voice sessions — typed sessions answer the typed message instead.
         if (micEnabled) send({ type: 'response.create' });
+        dcOpenResolve();
       };
       dc.onclose = () => {
         const wasLive = connected;
@@ -145,6 +155,7 @@ import { AppState } from './state.js';
       }).finally(() => clearTimeout(timer));
       if (!resp.ok) throw new Error('connection failed: ' + (await resp.text()).slice(0, 200));
       await pc.setRemoteDescription({ type: 'answer', sdp: await resp.text() });
+      await dcOpen; // fully usable before we return
       return { ok: true };
     } catch (e) {
       // Full cleanup on any startup failure — never leave the UI stuck on "connecting".
@@ -341,10 +352,19 @@ import { AppState } from './state.js';
     isMicEnabled: () => micEnabled,
     setMicEnabled: (v) => {
       micEnabled = !!v;
-      micStream?.getAudioTracks().forEach(t => { t.enabled = micEnabled; });
+      const track = micStream?.getAudioTracks()[0] || null;
+      if (track) track.enabled = micEnabled;
+      // Hard mute: detach the track from the peer connection entirely so the
+      // server receives zero audio, and flush anything already buffered.
+      try { audioSender?.replaceTrack(micEnabled ? track : null); } catch {}
       if (connected) {
         if (micEnabled) { Face.setMode('listening'); emit('status', 'Listening', 'listening'); }
-        else { Face.setMode('idle'); emit('status', 'Mic muted', 'idle'); }
+        else {
+          send({ type: 'input_audio_buffer.clear' });
+          userSpeaking = false; pendingUserTurn = false; clearTimeout(watchdog);
+          Face.setMode('idle');
+          emit('status', 'Muted — tap mic to talk', 'idle');
+        }
       }
     },
     on: (ev, fn) => listeners[ev].push(fn),
