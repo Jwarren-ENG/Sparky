@@ -76,9 +76,9 @@ import { Face } from './face.js';
           console.log('wake word heard:', r.text);
           Face.react('excited', 700); // quick brow raise: "I heard you"
           stop();
-          // Mid typed-session, "Hey Sparky" unmutes the mic instead of no-op.
-          if (RT.isConnected() && !RT.isMicEnabled()) RT.setMicEnabled(true);
-          else RT.connect({ micEnabled: true });
+          // Wake word only starts sessions from standby. It never unmutes a
+          // live session — mute is strictly manual (pill / button / ⌘⇧M).
+          if (!RT.isConnected()) RT.connect({ micEnabled: true });
         }
       } catch (e) { console.warn('wake transcribe failed', e); }
     };

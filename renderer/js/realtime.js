@@ -358,8 +358,14 @@ import { AppState } from './state.js';
       // server receives zero audio, and flush anything already buffered.
       try { audioSender?.replaceTrack(micEnabled ? track : null); } catch {}
       if (connected) {
-        if (micEnabled) { Face.setMode('listening'); emit('status', 'Listening', 'listening'); }
-        else {
+        if (micEnabled) {
+          // Restore server-side turn detection along with the audio track.
+          send({ type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: { type: 'semantic_vad', eagerness: 'high', create_response: true, interrupt_response: true } } } } });
+          Face.setMode('listening'); emit('status', 'Listening', 'listening');
+        } else {
+          // Server-side guarantee: with turn detection off, even leaked audio
+          // can never trigger a response while muted.
+          send({ type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: null } } } });
           send({ type: 'input_audio_buffer.clear' });
           userSpeaking = false; pendingUserTurn = false; clearTimeout(watchdog);
           Face.setMode('idle');

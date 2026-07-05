@@ -673,7 +673,7 @@ const exec = {
   async mic_control({ muted }) {
     emit('mic', { muted: !!muted });
     logAction('mic_control', muted ? 'Muted microphone (voice command)' : 'Unmuted microphone');
-    return { ok: true, muted: !!muted, note: muted ? 'Mic is muted — the user can unmute with the mic button, ⌘⇧M, or by saying Hey Sparky. Acknowledge briefly, then stay quiet.' : 'Mic is live again.' };
+    return { ok: true, muted: !!muted, note: muted ? 'Mic is muted — the user unmutes manually with the mic button or ⌘⇧M (voice cannot unmute). Acknowledge briefly, then stay quiet.' : 'Mic is live again.' };
   },
   async settings_get() { return store.settings.data; },
   async settings_set({ key, value }) {

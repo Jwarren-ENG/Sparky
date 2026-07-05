@@ -75,8 +75,9 @@ initCards({ injectText: (t) => RT.injectText(t) });
   function setMuted(muted) {
     if (!RT.isConnected()) return;
     RT.setMicEnabled(!muted);
-    if (muted) Wake.onSessionEnd();   // "Hey Sparky" can unmute
-    else Wake.onSessionStart();
+    // Mute is manual-only: the wake listener stays OFF during sessions so
+    // saying "Sparky…" can't silently unmute you. Unmute = pill / button / ⌘⇧M.
+    Wake.onSessionStart(); // (stops the listener)
     syncMuteBtn();
   }
   muteBtn.addEventListener('click', () => setMuted(RT.isMicEnabled()));
