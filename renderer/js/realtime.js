@@ -10,7 +10,8 @@ import { AppState } from './state.js';
   let pendingResponseKick = false;   // response.create queued behind an active response
   let userEnded = false;             // distinguishes ⏹ from network drops
   let reconnectUsed = false;         // one silent reconnect per drop
-  let assistantBuf = '';             // streaming caption accumulator
+  let assistantBuf = '';             // streaming caption accumulator (Sparky)
+  let userBuf = '';                  // streaming caption accumulator (user)
   const transcript = [];             // rolling session transcript → episodic memory
   const runningTools = new Set();
 
@@ -231,6 +232,8 @@ import { AppState } from './state.js';
 
       case 'input_audio_buffer.speech_started':
         userSpeaking = true;
+        userBuf = '';
+        emit('caption', '…', 'you'); // live bubble appears the instant you speak
         Face.setMode('listening');
         emit('status', 'Listening', 'listening');
         break;
@@ -239,7 +242,13 @@ import { AppState } from './state.js';
         if (pendingResponseKick || pendingUserTurn) ensureResponseSoon();
         break;
 
+      case 'conversation.item.input_audio_transcription.delta':
+        // Your own words, live, as you say them.
+        userBuf += ev.delta || '';
+        if (userBuf.trim()) emit('caption', userBuf, 'you');
+        break;
       case 'conversation.item.input_audio_transcription.completed':
+        userBuf = '';
         if (ev.transcript?.trim()) {
           emit('caption', ev.transcript.trim(), 'you');
           transcript.push('User: ' + ev.transcript.trim());
