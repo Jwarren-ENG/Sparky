@@ -67,6 +67,12 @@ import { esc } from './shared.js';
   // ---------- Artifact tab ----------
   function renderArtifact(a) {
     const el = pages.artifact;
+    if (a.kind === 'loading') {
+      // Instant "working on it" state — replaced by the real artifact when it lands.
+      el.innerHTML = `<div class="pempty"><div class="pempty-ic" style="animation: spin 1s linear infinite;">&#9696;</div><p>${esc(a.title || 'Working…')}</p></div>`;
+      openTo('artifact');
+      return;
+    }
     if (a.kind === 'search') {
       el.innerHTML = `<div class="psection">Web results &middot; ${esc(a.title.replace(/^Web:\s*/, ''))}</div>` +
         a.results.map((r, i) => `

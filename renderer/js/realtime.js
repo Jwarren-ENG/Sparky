@@ -281,6 +281,7 @@ import { AppState } from './state.js';
   const SKIP_CARD = new Set(['show_menu', 'set_mood', 'working_memory_set', 'plan_update', 'settings_get']);
 
   function summarize(name, args) {
+    if (name === 'weather') return args.city ? `Checking weather in ${args.city}` : 'Checking the weather';
     if (name === 'web_search') return `Searching: "${args.query || ''}"`.slice(0, 60);
     if (name === 'generate_image') return `Generating image: "${args.prompt || ''}"`.slice(0, 60);
     if (name === 'open_app') return `Opening ${args.name || 'app'}`;

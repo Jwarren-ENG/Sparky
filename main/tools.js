@@ -46,6 +46,7 @@ function requireConfirmation(tool, args, summary, detail = null) {
 const dryRun = () => !!store.settings.data.dryRun;
 
 let uiCache = { time: 0, data: null };
+let weatherCache = { key: null, time: 0, data: null };
 function parseUiScan(r) {
   let app = '', window = '';
   const elements = [];
@@ -122,9 +123,16 @@ const exec = {
   },
 
   async weather({ city }) {
+    // Instant repeats: full result cached 5 minutes per place.
+    const cacheKey = city || '_local';
+    if (weatherCache.key === cacheKey && Date.now() - weatherCache.time < 5 * 60e3) {
+      emit('artifact', { kind: 'weather', title: `Weather — ${weatherCache.data.place}`, data: weatherCache.data });
+      return weatherCache.data;
+    }
+    emit('artifact', { kind: 'loading', title: 'Checking the weather…' });
     let lat, lon, place;
     if (city) {
-      const g = await (await fetchT(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1`, {}, 10000)).json();
+      const g = await (await fetchT(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1`, {}, 6000)).json();
       if (!g.results?.length) return { error: `Could not find city "${city}"` };
       ({ latitude: lat, longitude: lon, name: place } = g.results[0]);
     } else {
@@ -133,8 +141,8 @@ const exec = {
       if (cached && Date.now() - cached.time < 24 * 3600e3) {
         ({ lat, lon, place } = cached);
       } else {
-        try { const g = await (await fetchT('https://ipwho.is/', {}, 8000)).json(); if (g && g.success !== false && g.latitude) { lat = g.latitude; lon = g.longitude; place = g.city; } } catch {}
-        if (lat == null) { try { const ip = await (await fetchT('https://ipapi.co/json/', {}, 8000)).json(); if (ip && !ip.error && ip.latitude) { lat = ip.latitude; lon = ip.longitude; place = ip.city; } } catch {} }
+        try { const g = await (await fetchT('https://ipwho.is/', {}, 5000)).json(); if (g && g.success !== false && g.latitude) { lat = g.latitude; lon = g.longitude; place = g.city; } } catch {}
+        if (lat == null) { try { const ip = await (await fetchT('https://ipapi.co/json/', {}, 5000)).json(); if (ip && !ip.error && ip.latitude) { lat = ip.latitude; lon = ip.longitude; place = ip.city; } } catch {} }
         if (lat == null && cached) ({ lat, lon, place } = cached); // stale beats broken
         if (lat == null) return { error: 'Could not determine location (geolocation services rate-limited). Ask the user which city and call weather with it — I will remember their area afterward.' };
         place = place || 'your area';
@@ -142,8 +150,9 @@ const exec = {
         store.settings.save();
       }
     }
-    const w = await (await fetchT(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=3&timezone=auto&temperature_unit=fahrenheit`, {}, 10000)).json();
+    const w = await (await fetchT(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=3&timezone=auto&temperature_unit=fahrenheit`, {}, 8000)).json();
     const out = { place, current: w.current, daily: w.daily };
+    weatherCache = { key: cacheKey, time: Date.now(), data: out };
     emit('artifact', { kind: 'weather', title: `Weather — ${place}`, data: out });
     return out;
   },
