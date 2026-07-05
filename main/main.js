@@ -123,7 +123,7 @@ ipcMain.handle('session:secret', async () => {
       input: {
         // language pinned so captions never come back transcribed into another language
         transcription: { model: process.env.TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe', language: process.env.SPEECH_LANGUAGE || 'en' },
-        turn_detection: { type: 'semantic_vad', eagerness: 'medium', create_response: true, interrupt_response: true },
+        turn_detection: { type: 'semantic_vad', eagerness: 'high', create_response: true, interrupt_response: true },
       },
       output: { voice: process.env.VOICE || 'cedar' },
     },

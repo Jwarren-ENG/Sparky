@@ -56,12 +56,31 @@ export function initCards(deps) { injectTextFn = deps.injectText; }
   }
 
   // ---------- ephemeral tool feedback ----------
+  // Long-running tools show a live elapsed counter so "is it stuck?" never
+  // needs asking. Cards for running tools stay until the tool resolves.
+  const runningStarts = new Map(); // cardId -> t0
+  setInterval(() => {
+    for (const [id, t0] of runningStarts) {
+      const rec = cards.get(id);
+      if (!rec) { runningStarts.delete(id); continue; }
+      const secs = Math.round((Date.now() - t0) / 1000);
+      if (secs < 4) continue;
+      let sub = rec.el.querySelector('.card-sub');
+      if (!sub) {
+        rec.el.querySelector('.card-text')?.insertAdjacentHTML('beforeend', '<div class="card-sub"></div>');
+        sub = rec.el.querySelector('.card-sub');
+      }
+      if (sub) sub.textContent = `still working — ${secs}s`;
+    }
+  }, 1000);
+
   function startTool(tool, summary) {
     const id = 'tool_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     const meta = TOOL_META[tool] || DEFAULT_META;
     const el = shell(id);
     el.innerHTML = head(meta.icon, meta.bg, summary, null, true);
-    upsert(id, el, { autoRemoveMs: 10000 });
+    upsert(id, el, { autoRemoveMs: 45000 }); // safety net only — finishTool resolves it
+    runningStarts.set(id, Date.now());
     return id;
   }
   // outcome: done | error | dry | confirm | cancelled — failures must not look green.
@@ -73,6 +92,7 @@ export function initCards(deps) { injectTextFn = deps.injectText; }
     cancelled: { icon: '—', bg: 'linear-gradient(135deg,#9a9aa2,#6e6e73)', ms: 2500 },
   };
   function finishTool(id, outcome = 'done', note = null) {
+    runningStarts.delete(id);
     const rec = cards.get(id);
     if (!rec) return;
     const o = OUTCOMES[outcome] || OUTCOMES.done;

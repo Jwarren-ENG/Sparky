@@ -45,6 +45,21 @@ function requireConfirmation(tool, args, summary, detail = null) {
 // ---------- computer-control primitives ----------
 const dryRun = () => !!store.settings.data.dryRun;
 
+let uiCache = { time: 0, data: null };
+function parseUiScan(r) {
+  let app = '', window = '';
+  const elements = [];
+  if (r.ok) {
+    for (const line of r.out.split('\n')) {
+      const parts = line.split('|');
+      if (parts[0] === 'APP') app = parts[1] || '';
+      else if (parts[0] === 'WIN') window = parts[1] || '';
+      else if (parts.length >= 6) elements.push({ role: parts[0], title: parts[1], x: +parts[2], y: +parts[3], w: +parts[4], h: +parts[5] });
+    }
+  }
+  return { app, window, elements };
+}
+
 // Computer-control tools are blocked until the model switches into computer
 // mode via set_mode (extra layer on top of dry-run and confirmations).
 let computerMode = false;
@@ -113,8 +128,19 @@ const exec = {
       if (!g.results?.length) return { error: `Could not find city "${city}"` };
       ({ latitude: lat, longitude: lon, name: place } = g.results[0]);
     } else {
-      const ip = await (await fetchT('https://ipapi.co/json/', {}, 10000)).json();
-      lat = ip.latitude; lon = ip.longitude; place = ip.city || 'your area';
+      // Geolocation with cache + provider fallback — ipapi.co rate-limits hard.
+      const cached = store.settings.data._geo;
+      if (cached && Date.now() - cached.time < 24 * 3600e3) {
+        ({ lat, lon, place } = cached);
+      } else {
+        try { const g = await (await fetchT('https://ipwho.is/', {}, 8000)).json(); if (g && g.success !== false && g.latitude) { lat = g.latitude; lon = g.longitude; place = g.city; } } catch {}
+        if (lat == null) { try { const ip = await (await fetchT('https://ipapi.co/json/', {}, 8000)).json(); if (ip && !ip.error && ip.latitude) { lat = ip.latitude; lon = ip.longitude; place = ip.city; } } catch {} }
+        if (lat == null && cached) ({ lat, lon, place } = cached); // stale beats broken
+        if (lat == null) return { error: 'Could not determine location (geolocation services rate-limited). Ask the user which city and call weather with it — I will remember their area afterward.' };
+        place = place || 'your area';
+        store.settings.data._geo = { lat, lon, place, time: Date.now() };
+        store.settings.save();
+      }
     }
     const w = await (await fetchT(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=3&timezone=auto&temperature_unit=fahrenheit`, {}, 10000)).json();
     const out = { place, current: w.current, daily: w.daily };
@@ -318,60 +344,96 @@ const exec = {
   },
   async ui_inspect() {
     // Structured element frames — the model should click elements by name,
-    // not guess pixel coordinates.
-    const script = `
+    // not guess pixel coordinates. Fast path: breadth-first scan 3 levels
+    // deep ("entire contents" can take 10-20s on complex windows); fall back
+    // to the deep walk only when the shallow one finds nearly nothing.
+    const ROLES = '{"AXButton", "AXTextField", "AXTextArea", "AXCheckBox", "AXPopUpButton", "AXRadioButton", "AXLink", "AXMenuButton", "AXComboBox"}';
+    const emitEl = `
+          set r to role of el
+          if r is in ${ROLES} then
+            set nm to ""
+            try
+              set nm to name of el
+            end try
+            if nm is missing value then set nm to ""
+            set pos to position of el
+            set sz to size of el
+            set out to out & r & "|" & nm & "|" & (item 1 of pos) & "|" & (item 2 of pos) & "|" & (item 1 of sz) & "|" & (item 2 of sz) & linefeed
+            set found to found + 1
+          end if`;
+    const shallow = `
       tell application "System Events"
         set p to first process whose frontmost is true
-        set appName to name of p
-        set out to "APP|" & appName & linefeed
+        set out to "APP|" & (name of p) & linefeed
+        set found to 0
+        try
+          set w to front window of p
+          set out to out & "WIN|" & (name of w) & linefeed
+          repeat with el in (UI elements of w)
+            if found ≥ 40 then exit repeat
+            try
+              ${emitEl}
+            end try
+            try
+              repeat with el2 in (UI elements of el)
+                if found ≥ 40 then exit repeat
+                set el to el2
+                try
+                  ${emitEl}
+                end try
+                try
+                  repeat with el3 in (UI elements of el2)
+                    if found ≥ 40 then exit repeat
+                    set el to el3
+                    try
+                      ${emitEl}
+                    end try
+                  end repeat
+                end try
+              end repeat
+            end try
+          end repeat
+        end try
+        return out
+      end tell`;
+    const deep = `
+      tell application "System Events"
+        set p to first process whose frontmost is true
+        set out to "APP|" & (name of p) & linefeed
+        set found to 0
         try
           set w to front window of p
           set out to out & "WIN|" & (name of w) & linefeed
           set elems to entire contents of w
           set maxN to count of elems
           if maxN > 400 then set maxN to 400
-          set found to 0
           repeat with idx from 1 to maxN
+            if found ≥ 40 then exit repeat
             try
               set el to item idx of elems
-              set r to role of el
-              if r is in {"AXButton", "AXTextField", "AXTextArea", "AXCheckBox", "AXPopUpButton", "AXRadioButton", "AXLink", "AXMenuButton", "AXComboBox"} then
-                set nm to ""
-                try
-                  set nm to name of el
-                end try
-                if nm is missing value then set nm to ""
-                set pos to position of el
-                set sz to size of el
-                set out to out & r & "|" & nm & "|" & (item 1 of pos) & "|" & (item 2 of pos) & "|" & (item 1 of sz) & "|" & (item 2 of sz) & linefeed
-                set found to found + 1
-                if found is greater than or equal to 40 then exit repeat
-              end if
+              ${emitEl}
             end try
           end repeat
         end try
         return out
       end tell`;
-    const r = await osascript(script, 20000);
-    if (!r.ok) return { error: r.error + ' (needs Accessibility permission)' };
-    let appName = '', winName = '';
-    const elements = [];
-    for (const line of r.out.split('\n')) {
-      const parts = line.split('|');
-      if (parts[0] === 'APP') appName = parts[1] || '';
-      else if (parts[0] === 'WIN') winName = parts[1] || '';
-      else if (parts.length >= 6) {
-        elements.push({ role: parts[0], title: parts[1], x: +parts[2], y: +parts[3], w: +parts[4], h: +parts[5] });
-      }
+    let r = await osascript(shallow, 10000);
+    let parsed = parseUiScan(r);
+    if (!r.ok || parsed.elements.length < 3) {
+      r = await osascript(deep, 20000);
+      if (!r.ok) return { error: r.error + ' (needs Accessibility permission)' };
+      parsed = parseUiScan(r);
     }
-    logAction('ui_inspect', `Inspected ${appName} (${elements.length} elements)`);
-    return { app: appName, window: winName, elements, note: 'Prefer computer_click_element with a title from this list over raw coordinates.' };
+    uiCache = { time: Date.now(), data: parsed };
+    logAction('ui_inspect', `Inspected ${parsed.app} (${parsed.elements.length} elements)`);
+    return { ...parsed, note: 'Prefer computer_click_element with a title from this list over raw coordinates.' };
   },
   async computer_click_element({ title, role }) {
     if (!title) return { error: 'title is required' };
     // Resolve the element's frame via accessibility, then click its center
     // with the normal click machinery — element targeting beats pixel guessing.
-    const insp = await exec.ui_inspect();
+    // A fresh ui_inspect from the last few seconds is reused instead of rescanning.
+    const insp = (uiCache.data && Date.now() - uiCache.time < 5000) ? uiCache.data : await exec.ui_inspect();
     if (insp.error) return insp;
     const q = title.toLowerCase();
     const match = insp.elements.find(e => (!role || e.role === role) && e.title.toLowerCase() === q)

@@ -48,6 +48,7 @@ initCards({ injectText: (t) => RT.injectText(t) });
     // Specific beats generic: tool summaries ("Searching the web…") show in the pill.
     pillLabelEl.textContent = text || PILL_LABEL[mode] || PILL_LABEL.idle;
     ariaStatus.textContent = text;
+    $('mini-status').textContent = text || ''; // bubble mode gets the same live status
   });
   RT.on('caption', (text, who) => {
     if (settings.captions === false) return;

@@ -20,7 +20,16 @@ import { esc } from './shared.js';
     mermaidReady = new Promise((resolve, reject) => {
       const s = document.createElement('script');
       s.src = '../node_modules/mermaid/dist/mermaid.min.js';
-      s.onload = () => { window.mermaid.initialize({ startOnLoad: false, theme: 'neutral' }); resolve(); };
+      s.onload = () => {
+        // useMaxWidth:false renders at natural size — panel scrolls, and the
+        // expand affordance gives diagrams the full window.
+        window.mermaid.initialize({
+          startOnLoad: false, theme: 'neutral',
+          flowchart: { useMaxWidth: false }, sequence: { useMaxWidth: false },
+          gantt: { useMaxWidth: false }, journey: { useMaxWidth: false }, pie: { useMaxWidth: false },
+        });
+        resolve();
+      };
       s.onerror = reject;
       document.head.appendChild(s);
     });
@@ -85,9 +94,10 @@ import { esc } from './shared.js';
     } else if (a.kind === 'image' || a.kind === 'image_loading') {
       el.innerHTML = `<div class="psection">${esc(a.title)}</div><div class="prich">${a.kind === 'image' ? `<img src="file://${esc(a.path)}?t=${Date.now()}">` : '<div class="pempty"><div class="pempty-ic" style="animation: spin 1s linear infinite;">&#9696;</div><p>Generating&hellip;</p></div>'}</div>`;
     } else if (a.kind === 'mermaid') {
-      el.innerHTML = `<div class="psection">${esc(a.title)}</div><div class="prich"><div class="mermaid-holder"><pre>${esc(a.code)}</pre></div></div>`;
+      el.innerHTML = `<div class="psection">${esc(a.title)} <span class="psection-hint">tap diagram to expand</span></div><div class="prich"><div class="mermaid-holder"><pre>${esc(a.code)}</pre></div></div>`;
       ensureMermaid().then(() => window.mermaid.render(`pm_${Date.now()}`, a.code)).then(({ svg }) => {
-        const h = el.querySelector('.mermaid-holder'); if (h) h.innerHTML = svg;
+        const h = el.querySelector('.mermaid-holder');
+        if (h) { h.innerHTML = svg; h.addEventListener('click', () => panel.classList.toggle('fullscreen')); }
       }).catch(() => {});
     } else if (a.kind === 'code') {
       el.innerHTML = `<div class="psection">${esc(a.title)}</div><div class="prich"><pre>${esc(a.content)}</pre></div>`;
