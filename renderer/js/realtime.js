@@ -62,9 +62,30 @@ import { AppState } from './state.js';
 
   function send(obj) { if (dc?.readyState === 'open') dc.send(JSON.stringify(obj)); }
 
+  // Never create a response while the user is mid-utterance — it would occupy
+  // the response slot and the server then silently skips responding to their
+  // turn (the "I have to ask twice" bug).
+  let userSpeaking = false;
+  let pendingUserTurn = false;   // a committed user turn that has no response yet
+  let watchdog = null;
+
   function kickResponse() {
-    if (activeResponse) { pendingResponseKick = true; return; }
+    if (activeResponse || userSpeaking) { pendingResponseKick = true; return; }
     send({ type: 'response.create' });
+  }
+
+  // Guarantee: every committed user turn (and every queued tool-output kick)
+  // gets a response within ~1s, even if the server-side VAD's auto-response
+  // was suppressed by a collision.
+  function ensureResponseSoon() {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      if (connected && !activeResponse && !userSpeaking && (pendingUserTurn || pendingResponseKick)) {
+        console.log('[watchdog] recovering dropped turn');
+        pendingUserTurn = false; pendingResponseKick = false;
+        send({ type: 'response.create' });
+      }
+    }, 1000);
   }
 
   let micEnabled = true;
@@ -138,6 +159,7 @@ import { AppState } from './state.js';
 
   function teardown(reason) {
     connected = false; activeResponse = false; pendingResponseKick = false;
+    userSpeaking = false; pendingUserTurn = false; clearTimeout(watchdog);
     try { dc?.close(); } catch {}
     try { pc?.close(); } catch {}
     micStream?.getTracks().forEach(t => t.stop());
@@ -162,6 +184,10 @@ import { AppState } from './state.js';
         activeResponse = true;
         reconnectUsed = false; // healthy traffic resets the reconnect budget
         assistantBuf = '';
+        // Any new response covers the latest conversation state.
+        pendingUserTurn = false;
+        pendingResponseKick = false;
+        clearTimeout(watchdog);
         // Thinking state starts here (not on speech_stopped) so VAD false
         // positives — a cough, a pause — don't flicker the face.
         if (Face.getMode() !== 'speaking') { Face.setMode('thinking'); emit('status', 'Thinking…', 'thinking'); }
@@ -170,7 +196,16 @@ import { AppState } from './state.js';
         activeResponse = false;
         if (runningTools.size) { emit('status', 'Working…', 'thinking'); Face.setMode('thinking'); }
         else if (Face.getMode() !== 'speaking') { settleToListening(); }
-        if (pendingResponseKick) { pendingResponseKick = false; send({ type: 'response.create' }); }
+        if ((pendingResponseKick || pendingUserTurn) && !userSpeaking) {
+          pendingResponseKick = false; pendingUserTurn = false;
+          send({ type: 'response.create' });
+        }
+        break;
+
+      case 'input_audio_buffer.committed':
+        // The user's turn is in the conversation — make sure it gets answered.
+        pendingUserTurn = true;
+        ensureResponseSoon();
         break;
 
       case 'output_audio_buffer.started':
@@ -184,8 +219,13 @@ import { AppState } from './state.js';
         break;
 
       case 'input_audio_buffer.speech_started':
+        userSpeaking = true;
         Face.setMode('listening');
         emit('status', 'Listening', 'listening');
+        break;
+      case 'input_audio_buffer.speech_stopped':
+        userSpeaking = false;
+        if (pendingResponseKick || pendingUserTurn) ensureResponseSoon();
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
