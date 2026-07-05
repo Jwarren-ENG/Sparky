@@ -179,6 +179,11 @@ body { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, s
 #top-controls button { width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.5); cursor: pointer; background: rgba(255,255,255,0.3); backdrop-filter: blur(24px) saturate(1.6); -webkit-backdrop-filter: blur(24px) saturate(1.6); font-size: 17px; color: rgba(29,29,31,0.6); transition: background 0.25s ease; display: flex; align-items: center; justify-content: center; }
 #top-controls button:hover { background: rgba(255,255,255,0.55); }
 #settings-btn.computer-mode { box-shadow: 0 0 0 2px rgba(0,113,227,0.55); }
+
+/* Computer-control indicator: dim when off, glowing blue when active */
+#cc-indicator { opacity: 0.45; cursor: default !important; }
+#cc-indicator.on { opacity: 1; cursor: pointer !important; background: rgba(0,113,227,0.16) !important; border-color: rgba(0,113,227,0.45) !important; color: #0071e3 !important; box-shadow: 0 0 10px rgba(0,113,227,0.35), 0 0 0 1px rgba(0,113,227,0.2); animation: ccPulse 2.2s ease-in-out infinite; }
+@keyframes ccPulse { 50% { box-shadow: 0 0 16px rgba(0,113,227,0.5), 0 0 0 1px rgba(0,113,227,0.3); } }
 #panel-btn { position: relative; }
 #panel-btn.has-badge::after { content: ""; position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: #0071e3; box-shadow: 0 0 6px rgba(0,113,227,0.6); }
 

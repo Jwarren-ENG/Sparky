@@ -184,9 +184,17 @@ initCards({ injectText: (t) => RT.injectText(t) });
 
   window.sparky.onSettings((s) => { settings = s; AppState.dryRun = !!s.dryRun; Wake.setEnabled(s.wakeWord); });
 
-  // ---------- computer mode badge (tool gate) ----------
+  // ---------- computer-control indicator ----------
+  const ccIndicator = $('cc-indicator');
   window.sparky.onMode(({ mode }) => {
-    settingsBtn.classList.toggle('computer-mode', mode === 'computer');
+    const on = mode === 'computer';
+    settingsBtn.classList.toggle('computer-mode', on);
+    ccIndicator.classList.toggle('on', on);
+    ccIndicator.title = on ? 'Computer control: ON — click to turn off' : 'Computer control: off (Sparky enables it when a task needs it)';
+  });
+  // Kill switch: clicking the lit indicator revokes computer control immediately.
+  ccIndicator.addEventListener('click', () => {
+    if (ccIndicator.classList.contains('on')) window.sparky.runTool('set_mode', { mode: 'display' });
   });
 
   // ---------- mini bubble (window state, decoupled from the tool gate) ----------
