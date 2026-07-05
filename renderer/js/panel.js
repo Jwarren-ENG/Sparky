@@ -97,7 +97,12 @@ import { esc } from './shared.js';
       el.innerHTML = `<div class="psection">${esc(a.title)} <span class="psection-hint">tap diagram to expand</span></div><div class="prich"><div class="mermaid-holder"><pre>${esc(a.code)}</pre></div></div>`;
       ensureMermaid().then(() => window.mermaid.render(`pm_${Date.now()}`, a.code)).then(({ svg }) => {
         const h = el.querySelector('.mermaid-holder');
-        if (h) { h.innerHTML = svg; h.addEventListener('click', () => panel.classList.toggle('fullscreen')); }
+        if (h) {
+          h.innerHTML = svg;
+          h.addEventListener('click', () => panel.classList.toggle('fullscreen'));
+          // Diagrams get the whole window by default — tap to shrink back.
+          panel.classList.add('fullscreen');
+        }
       }).catch(() => {});
     } else if (a.kind === 'code') {
       el.innerHTML = `<div class="psection">${esc(a.title)}</div><div class="prich"><pre>${esc(a.content)}</pre></div>`;
